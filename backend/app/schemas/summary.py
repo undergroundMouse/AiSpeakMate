@@ -28,11 +28,33 @@ class PracticeSuggestion(BaseModel):
     resource_url: str | None = None
 
 
+class TopPronunciationError(BaseModel):
+    utterance_id: uuid.UUID
+    sentence: str
+    score: int
+    detail_url: str
+
+
+class TopGrammarError(BaseModel):
+    utterance_id: uuid.UUID
+    original: str
+    error_type: str
+    error_span: dict
+    correction: str
+    corrected_sentence: str | None = None
+    explanation: str | None = None
+    severity: str = "medium"
+
+
 class SessionSummaryResponse(BaseModel):
     id: uuid.UUID
     session_id: uuid.UUID
+    scene_name: str | None = None
+    duration_seconds: int = 0
     radar: RadarScores
     highlights: list[Highlight] = []
+    top_pronunciation_errors: list[TopPronunciationError] = []
+    top_grammar_errors: list[TopGrammarError] = []
     practice_suggestions: list[PracticeSuggestion] = []
     share_image_url: str | None = None
     created_at: datetime

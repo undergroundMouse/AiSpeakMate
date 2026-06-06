@@ -14,11 +14,14 @@ from ..models.summary import SessionSummary
 from ..models.achievement import UserAchievement, Achievement
 from ..models.progress import UserWeaknessRecord
 from ..models.user import User
+from ..schemas.evaluation import GrammarErrorOut
 from ..schemas.summary import (
     SessionSummaryResponse,
     RadarScores,
     Highlight,
     PracticeSuggestion,
+    TopPronunciationError,
+    TopGrammarError,
     UserProgressResponse,
     ProgressSnapshot,
     WeaknessRecord,
@@ -179,9 +182,69 @@ async def get_session_summary(
         await db.commit()
         await db.refresh(summary)
 
+    # Get scene name and duration
+    scene_name = None
+    if session.scene_id:
+        from ..models.scene import Scene
+        scene_result = await db.execute(
+            select(Scene.name).where(Scene.id == session.scene_id)
+        )
+        scene_name = scene_result.scalar_one_or_none()
+    duration_seconds = session.duration_seconds or 0
+
+    # Get top pronunciation errors (up to 3)
+    from ..models.evaluation import PronunciationEvaluation, GrammarError
+    from ..models.session import Utterance
+
+    pronunciation_errors: list[TopPronunciationError] = []
+    pron_result = await db.execute(
+        select(PronunciationEvaluation)
+        .join(Utterance, Utterance.id == PronunciationEvaluation.utterance_id)
+        .where(Utterance.session_id == session_id)
+        .order_by(PronunciationEvaluation.overall_score.asc())
+        .limit(3)
+    )
+    for pe in pron_result.scalars().all():
+        utt_result = await db.execute(
+            select(Utterance.text).where(Utterance.id == pe.utterance_id)
+        )
+        utt_text = utt_result.scalar_one_or_none() or ""
+        pronunciation_errors.append(TopPronunciationError(
+            utterance_id=pe.utterance_id,
+            sentence=utt_text,
+            score=pe.overall_score,
+            detail_url=f"/sessions/{session_id}/pronunciation/{pe.utterance_id}",
+        ))
+
+    # Get top grammar errors (up to 3)
+    grammar_errors: list[TopGrammarError] = []
+    gram_result = await db.execute(
+        select(GrammarError)
+        .join(Utterance, Utterance.id == GrammarError.utterance_id)
+        .where(
+            Utterance.session_id == session_id,
+            GrammarError.is_expression_issue == False,
+        )
+        .order_by(GrammarError.id.desc())
+        .limit(3)
+    )
+    for ge in gram_result.scalars().all():
+        grammar_errors.append(TopGrammarError(
+            utterance_id=ge.utterance_id,
+            original=ge.original_text or "",
+            error_type=ge.error_type or "unknown",
+            error_span={"start": ge.error_span_start or 0, "end": ge.error_span_end or 0},
+            correction=ge.correction or "",
+            corrected_sentence=ge.corrected_sentence,
+            explanation=ge.explanation,
+            severity=ge.severity or "medium",
+        ))
+
     return SessionSummaryResponse(
         id=summary.id,
         session_id=summary.session_id,
+        scene_name=scene_name,
+        duration_seconds=duration_seconds,
         radar=RadarScores(
             fluency=summary.radar_fluency or 50,
             vocabulary=summary.radar_vocabulary or 50,
@@ -190,6 +253,8 @@ async def get_session_summary(
             interaction=summary.radar_interaction or 50,
         ),
         highlights=summary.highlights or [],
+        top_pronunciation_errors=pronunciation_errors,
+        top_grammar_errors=grammar_errors,
         practice_suggestions=summary.practice_suggestions or [],
         share_image_url=summary.share_image_url,
         created_at=summary.created_at,
