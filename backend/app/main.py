@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .api.auth import router as auth_router
 from .api.scene import router as scene_router
 from .api.session import router as session_router
+from .api.evaluation import router as evaluation_router
 from .api.ws import router as ws_router
 from .core.config import settings
 
@@ -20,6 +21,7 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(scene_router, prefix="/api/v1")
 app.include_router(session_router, prefix="/api/v1")
+app.include_router(evaluation_router, prefix="/api/v1")
 app.include_router(ws_router, prefix="/api/v1")
 
 
