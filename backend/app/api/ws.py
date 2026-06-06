@@ -135,45 +135,59 @@ async def websocket_endpoint(websocket: WebSocket):
 
             # --- START SESSION ---
             if msg_type == "start_session":
-                session_id_str = payload.get("session_id")
-                if not session_id_str:
+                scene_id_raw = payload.get("scene_id")
+                difficulty = payload.get("difficulty", "beginner")
+
+                if not scene_id_raw:
                     await websocket.send_json({
                         "type": "error",
-                        "payload": {"code": 1001, "message": "Missing session_id"},
+                        "payload": {"code": 1001, "message": "Missing scene_id"},
                     })
                     continue
 
-                session_id = uuid.UUID(session_id_str)
-                data = await _get_session_data(db, session_id)
-                if data is None:
+                # Look up the scene to get role_prompt and opening_line
+                scene_result = await db.execute(
+                    select(Scene).where(Scene.id == int(scene_id_raw))
+                )
+                scene = scene_result.scalar_one_or_none()
+                if scene is None:
                     await websocket.send_json({
                         "type": "error",
-                        "payload": {"code": 1004, "message": "Session not found"},
+                        "payload": {"code": 1004, "message": "Scene not found"},
                     })
                     continue
 
-                current_session_id = session_id
-                sequence_counter = data["utterance_count"]
-                scene_data = data["scene_data"]
+                # Create a new session server-side
+                session = Session(
+                    user_id=user_id,
+                    scene_id=scene.id,
+                    difficulty=difficulty,
+                    status="active",
+                    started_at=datetime.now(timezone.utc),
+                )
+                db.add(session)
+                await db.commit()
+                await db.refresh(session)
 
-                active_connections[session_id] = {
+                current_session_id = session.id
+                sequence_counter = 0
+
+                active_connections[session.id] = {
                     "websocket": websocket,
                     "user_id": user_id,
                     "interrupted_responses": set(),
                 }
 
-                opening_line = "Hello! Let's practice English. What would you like to talk about?"
-                if scene_data and scene_data.get("opening_line"):
-                    opening_line = scene_data["opening_line"]
+                opening_line = scene.opening_line or "Hello! Let's practice English. What would you like to talk about?"
 
                 # store AI opening
                 sequence_counter += 1
-                ai_utt = await _store_utterance(session_id, "ai", opening_line, sequence_counter)
+                ai_utt = await _store_utterance(session.id, "ai", opening_line, sequence_counter)
 
                 await websocket.send_json({
                     "type": "session_ready",
                     "payload": {
-                        "session_id": str(session_id),
+                        "session_id": str(session.id),
                         "ai_first_message": {
                             "utterance_id": str(ai_utt.id),
                             "text": opening_line,
