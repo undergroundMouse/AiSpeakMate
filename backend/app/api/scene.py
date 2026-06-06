@@ -137,4 +137,15 @@ async def create_custom_scene(
     db.add(custom)
     await db.commit()
     await db.refresh(custom)
-    return {"custom_scene_id": str(custom.id), "topic": body.topic}
+
+    # Generate role_prompt and opening_line based on topic/role
+    role_name = body.role or "an English conversation partner"
+    role_prompt = f"You are {role_name}. Talk about: {body.topic}. Keep the conversation at {body.difficulty} level. Correct the user's grammar gently and encourage them."
+    opening_line = f"Hi! Let's talk about {body.topic}. What do you think about this topic?"
+
+    return {
+        "custom_scene_id": str(custom.id),
+        "topic": body.topic,
+        "role_prompt": role_prompt,
+        "opening_line": opening_line,
+    }

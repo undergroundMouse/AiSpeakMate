@@ -46,10 +46,17 @@ export interface SceneDetail {
 
 export interface CustomSceneRequest {
   topic: string;
-  role: string;
+  role?: string;
   difficulty: string;
-  focus_grammar?: string;
-  focus_vocab?: string;
+  focus_grammar?: string[];
+  focus_vocab?: string[];
+}
+
+export interface CustomSceneResponse {
+  custom_scene_id: string;
+  topic: string;
+  role_prompt: string;
+  opening_line: string;
 }
 
 export const sceneApi = {
@@ -62,6 +69,6 @@ export const sceneApi = {
   },
 
   createCustom(data: CustomSceneRequest) {
-    return apiClient.post<{ custom_scene_id: string; topic: string }>('/scenes/custom', data).then((res) => res.data);
+    return apiClient.post<CustomSceneResponse>('/scenes/custom', data).then((res) => res.data);
   },
 };
