@@ -13,6 +13,7 @@ from ..models.user import User
 from ..schemas.session import (
     EndSessionResponse,
     SessionHistory,
+    SessionListResponse,
     SessionResponse,
     StartSessionRequest,
     UtteranceBrief,
@@ -21,6 +22,65 @@ from .dependencies import get_current_user
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
+
+@router.get("", response_model=SessionListResponse)
+async def list_sessions(
+    status: str | None = None,
+    skip: int = 0,
+    limit: int = 20,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List sessions for the current user with optional status filter and pagination."""
+    count_q = select(func.count(Session.id)).where(Session.user_id == user.id)
+    if status:
+        count_q = count_q.where(Session.status == status)
+
+    total_result = await db.execute(count_q)
+    total = total_result.scalar() or 0
+
+    rows_q = (
+        select(
+            Session,
+            func.count(Utterance.id).label("utt_count"),
+        )
+        .outerjoin(Utterance, Utterance.session_id == Session.id)
+        .where(Session.user_id == user.id)
+        .group_by(Session.id)
+        .order_by(Session.started_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    if status:
+        rows_q = rows_q.where(Session.status == status)
+
+    rows_result = await db.execute(rows_q)
+    rows = rows_result.all()
+
+    sessions: list[SessionHistory] = []
+    for row in rows:
+        sess = row[0]
+        utt_count = row[1]
+        scene_name = None
+        if sess.scene_id:
+            scene_result = await db.execute(
+                select(Scene.name).where(Scene.id == sess.scene_id)
+            )
+            scene_name = scene_result.scalar_one_or_none()
+        sessions.append(
+            SessionHistory(
+                session_id=sess.id,
+                scene_id=sess.scene_id,
+                scene_name=scene_name,
+                difficulty=sess.difficulty,
+                status=sess.status,
+                started_at=sess.started_at,
+                ended_at=sess.ended_at,
+                utterance_count=utt_count,
+            )
+        )
+
+    return SessionListResponse(total=total, sessions=sessions)
 
 @router.post("/start", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
 async def start_session(

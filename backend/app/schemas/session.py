@@ -42,3 +42,11 @@ class SessionHistory(BaseModel):
     started_at: datetime
     ended_at: Optional[datetime] = None
     utterance_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+class SessionListResponse(BaseModel):
+    total: int
+    sessions: list[SessionHistory]

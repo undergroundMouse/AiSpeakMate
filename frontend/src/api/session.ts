@@ -12,6 +12,7 @@ export interface SessionItem {
   status: string;
   started_at: string;
   ended_at?: string | null;
+  scene_name?: string | null;
   utterance_count?: number;
   duration_seconds?: number;
 }
@@ -22,13 +23,18 @@ export interface SessionListParams {
   limit?: number;
 }
 
+export interface SessionListResponse {
+  total: number;
+  sessions: SessionItem[];
+}
+
 export const sessionApi = {
   create(data: SessionCreate) {
     return apiClient.post<SessionItem>('/sessions/start', data).then((res) => res.data);
   },
 
   list(params?: SessionListParams) {
-    return apiClient.get<SessionItem[]>('/sessions', { params }).then((res) => res.data);
+    return apiClient.get<SessionListResponse>('/sessions', { params }).then((res) => res.data);
   },
 
   getById(id: string) {
