@@ -13,29 +13,50 @@
     <!-- Detail -->
     <div v-if="scene && !sceneStore.loading" class="detail-card">
       <div class="scene-info">
-        <span class="scene-icon">{{ scene.icon || '🎯' }}</span>
+        <span class="scene-icon">{{ sceneIcon }}</span>
         <div>
-          <h1>{{ scene.title }}</h1>
-          <span class="difficulty" :class="scene.difficulty">
-            {{ DIFFICULTY_MAP[scene.difficulty] || scene.difficulty }}
+          <h1>{{ scene.name }}</h1>
+          <span v-if="difficultyLabel" class="difficulty" :class="difficultyClass">
+            {{ difficultyLabel }}
           </span>
-          <span class="category-badge">{{ scene.category }}</span>
         </div>
       </div>
 
-      <p class="description">{{ scene.description }}</p>
+      <div class="intro-section">
+        <p class="opening-line">"{{ scene.opening_line }}"</p>
+        <p class="role-prompt">{{ scene.role_prompt }}</p>
+      </div>
 
-      <div v-if="scene.suggested_phrases?.length" class="phrases">
-        <h3>建议句型</h3>
-        <ul>
-          <li v-for="(phrase, idx) in scene.suggested_phrases" :key="idx">{{ phrase }}</li>
+      <!-- Vocabulary section -->
+      <div v-if="scene.vocab_list?.length" class="section vocab-section">
+        <h3>核心词汇</h3>
+        <ul class="vocab-list">
+          <li v-for="(v, idx) in scene.vocab_list" :key="idx" class="vocab-item">
+            <span class="vocab-word">{{ v.word }}</span>
+            <span v-if="v.phonetic" class="vocab-phonetic">{{ v.phonetic }}</span>
+            <span v-if="v.translation" class="vocab-translation">{{ v.translation }}</span>
+          </li>
+        </ul>
+      </div>
+
+      <!-- Sentence patterns section -->
+      <div v-if="scene.sentence_patterns?.length" class="section patterns-section">
+        <h3>句式模板</h3>
+        <ul class="patterns-list">
+          <li v-for="(p, idx) in scene.sentence_patterns" :key="idx" class="pattern-item">
+            <p class="pattern-text">{{ p.pattern }}</p>
+            <p v-if="p.translation" class="pattern-translation">{{ p.translation }}</p>
+            <p v-if="p.example" class="pattern-example">例：{{ p.example }}</p>
+          </li>
         </ul>
       </div>
 
       <div class="meta-row">
-        <span v-if="scene.duration_minutes">预计时长：{{ scene.duration_minutes }} 分钟</span>
-        <span v-if="scene.tags.length" class="tags">
-          <span v-for="tag in scene.tags" :key="tag" class="tag">{{ tag }}</span>
+        <span v-if="scene.suggested_duration_minutes">
+          预计时长：{{ scene.suggested_duration_minutes }} 分钟
+        </span>
+        <span v-if="difficultyLabel" class="meta-diff">
+          难度：{{ difficultyLabel }}
         </span>
       </div>
 
@@ -76,9 +97,40 @@ const startError = ref('');
 
 const scene = computed(() => sceneStore.currentScene);
 
+const sceneIcon = computed(() => {
+  const name = scene.value?.name || '';
+  if (name.includes('餐厅') || name.includes('Restaurant')) return '🍽️';
+  if (name.includes('酒店') || name.includes('Hotel')) return '🏨';
+  if (name.includes('机场') || name.includes('Airport')) return '✈️';
+  if (name.includes('医院') || name.includes('Hospital')) return '🏥';
+  if (name.includes('购物') || name.includes('Shopping')) return '🛍️';
+  if (name.includes('面试') || name.includes('Interview')) return '💼';
+  if (name.includes('演讲') || name.includes('Presentation')) return '🎤';
+  if (name.includes('日常') || name.includes('Daily')) return '💬';
+  return '🎯';
+});
+
+const difficultyLevel = computed(() => {
+  const settings = scene.value?.difficulty_settings;
+  if (!settings) return null;
+  return settings.level || null;
+});
+
+const difficultyLabel = computed(() => {
+  const level = difficultyLevel.value;
+  if (!level) return '';
+  return DIFFICULTY_MAP[level] || level;
+});
+
+const difficultyClass = computed(() => difficultyLevel.value || '');
+
 async function loadDetail() {
   errorMsg.value = '';
-  const id = route.params.id as string;
+  const id = Number(route.params.id);
+  if (isNaN(id)) {
+    errorMsg.value = '无效的场景 ID';
+    return;
+  }
   try {
     await sceneStore.fetchSceneDetail(id);
   } catch (e: any) {
@@ -91,8 +143,8 @@ async function startSession() {
   startError.value = '';
   starting.value = true;
   try {
-    const session = await sessionApi.create({ scene_id: scene.value.id });
-    router.push(`/chat/${session.id}`);
+    const session = await sessionApi.create({ scene_id: scene.value.scene_id });
+    router.push(`/chat/${session.session_id}`);
   } catch (e: any) {
     startError.value = e?.response?.data?.detail || '创建会话失败，请稍后重试';
   } finally {
@@ -161,37 +213,90 @@ onMounted(() => {
 .difficulty.beginner { color: var(--accent-success); }
 .difficulty.intermediate { color: var(--accent-warning); }
 .difficulty.advanced { color: var(--accent-danger); }
-.category-badge {
-  font-size: 0.75rem;
-  background: var(--accent-primary);
-  color: #0f172a;
-  padding: 2px 10px;
-  border-radius: 20px;
-}
 
-.description {
-  color: var(--text-secondary);
-  line-height: 1.65;
-  margin-bottom: 20px;
-}
-
-.phrases {
+.intro-section {
   margin-bottom: 20px;
   padding: 16px;
   background: var(--bg-primary);
   border-radius: 8px;
 }
-.phrases h3 {
+.opening-line {
+  font-style: italic;
+  font-size: 1.05rem;
+  color: var(--accent-primary);
+  margin-bottom: 10px;
+}
+.role-prompt {
+  color: var(--text-secondary);
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+
+.section {
+  margin-bottom: 20px;
+  padding: 16px;
+  background: var(--bg-primary);
+  border-radius: 8px;
+}
+.section h3 {
   font-size: 0.95rem;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   color: var(--accent-primary);
 }
-.phrases ul {
-  list-style: disc;
-  padding-left: 20px;
-  color: var(--text-secondary);
+
+.vocab-list {
+  list-style: none;
+  padding: 0;
+}
+.vocab-item {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-color, #334155);
   font-size: 0.9rem;
-  line-height: 1.7;
+}
+.vocab-item:last-child {
+  border-bottom: none;
+}
+.vocab-word {
+  font-weight: 600;
+  min-width: 80px;
+  color: var(--text-primary);
+}
+.vocab-phonetic {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+.vocab-translation {
+  color: var(--text-secondary);
+  margin-left: auto;
+}
+
+.patterns-list {
+  list-style: none;
+  padding: 0;
+}
+.pattern-item {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-color, #334155);
+}
+.pattern-item:last-child {
+  border-bottom: none;
+}
+.pattern-text {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.pattern-translation {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  margin-top: 2px;
+}
+.pattern-example {
+  color: var(--accent-primary);
+  font-size: 0.82rem;
+  margin-top: 2px;
 }
 
 .meta-row {
@@ -203,16 +308,10 @@ onMounted(() => {
   margin-bottom: 24px;
   flex-wrap: wrap;
 }
-.tags {
-  display: flex;
-  gap: 6px;
-}
-.tag {
+.meta-diff {
   background: var(--bg-card);
   padding: 2px 10px;
   border-radius: 10px;
-  font-size: 0.75rem;
-  color: var(--accent-primary);
 }
 
 .btn-start {

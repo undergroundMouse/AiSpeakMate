@@ -1,18 +1,19 @@
 import apiClient from './client';
 
 export interface SessionCreate {
-  scene_id: string;
+  scene_id: number;
 }
 
 export interface SessionItem {
-  id: string;
-  scene_id: string;
-  scene_title: string;
+  session_id: string;
+  scene_id: number | null;
+  custom_scene_id: string | null;
+  difficulty: string;
   status: string;
   started_at: string;
-  ended_at: string | null;
-  message_count: number;
-  duration_seconds: number;
+  ended_at?: string | null;
+  utterance_count?: number;
+  duration_seconds?: number;
 }
 
 export interface SessionListParams {
@@ -23,7 +24,7 @@ export interface SessionListParams {
 
 export const sessionApi = {
   create(data: SessionCreate) {
-    return apiClient.post<SessionItem>('/sessions', data).then((res) => res.data);
+    return apiClient.post<SessionItem>('/sessions/start', data).then((res) => res.data);
   },
 
   list(params?: SessionListParams) {
