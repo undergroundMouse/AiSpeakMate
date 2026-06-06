@@ -262,6 +262,7 @@ CREATE TABLE user_achievements (
     id              BIGSERIAL       PRIMARY KEY,
     user_id         UUID            NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     achievement_id  INT             NOT NULL REFERENCES achievements(id) ON DELETE CASCADE,
+    achievement_key VARCHAR(50)     NOT NULL DEFAULT '',
     unlocked_at     TIMESTAMP       NOT NULL DEFAULT NOW()
 );
 

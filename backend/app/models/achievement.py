@@ -34,6 +34,9 @@ class UserAchievement(Base):
         ForeignKey("achievements.id", ondelete="CASCADE"),
         nullable=False,
     )
+    achievement_key: Mapped[str] = mapped_column(
+        String(50), nullable=False, default=""
+    )
     unlocked_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.utcnow(),
     )
