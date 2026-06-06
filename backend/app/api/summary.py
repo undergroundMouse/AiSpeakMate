@@ -23,9 +23,101 @@ from ..schemas.summary import (
     WeaknessRecord,
     AchievementListResponse,
     AchievementInfo,
+    TrendPoint,
+    ProgressTrendResponse,
 )
 
 router = APIRouter()
+
+
+# --- Progress Trend ---
+
+VALID_DIMENSIONS = ["fluency", "vocabulary", "grammar", "pronunciation", "interaction"]
+VALID_GRANULARITIES = ["daily", "weekly"]
+
+
+@router.get(
+    "/progress/trend",
+    response_model=ProgressTrendResponse,
+    summary="获取进步趋势数据",
+)
+async def get_progress_trend(
+    start_date: str,
+    end_date: str,
+    dimension: str = "all",
+    granularity: str = "daily",
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get progress trend data with date range, dimension, and granularity filters."""
+    from datetime import date as date_type, timedelta
+
+    if dimension != "all" and dimension not in VALID_DIMENSIONS:
+        raise HTTPException(400, f"Invalid dimension. Must be one of: all, {', '.join(VALID_DIMENSIONS)}")
+
+    if granularity not in VALID_GRANULARITIES:
+        raise HTTPException(400, f"Invalid granularity. Must be one of: {', '.join(VALID_GRANULARITIES)}")
+
+    try:
+        sd = date_type.fromisoformat(start_date)
+        ed = date_type.fromisoformat(end_date)
+    except ValueError:
+        raise HTTPException(400, "Invalid date format. Use YYYY-MM-DD.")
+
+    if sd > ed:
+        raise HTTPException(400, "start_date must be before or equal to end_date")
+
+    from ..models.progress import UserProgressSnapshot
+
+    result = await db.execute(
+        select(UserProgressSnapshot)
+        .where(
+            UserProgressSnapshot.user_id == current_user.id,
+            UserProgressSnapshot.snapshot_date >= sd,
+            UserProgressSnapshot.snapshot_date <= ed,
+        )
+        .order_by(UserProgressSnapshot.snapshot_date)
+    )
+    snapshots = result.scalars().all()
+
+    if not snapshots:
+        return ProgressTrendResponse(points=[])
+
+    if granularity == "weekly":
+        # Group by ISO week. Compute an average score per week.
+        from collections import defaultdict
+        week_buckets: dict[str, list[dict]] = defaultdict(list)
+        for s in snapshots:
+            iso_year, iso_week, _ = s.snapshot_date.isocalendar()
+            week_key = f"{iso_year}-W{iso_week:02d}"
+            week_buckets[week_key].append({
+                "total_score": s.total_score,
+                "dimension_scores": s.dimension_scores,
+            })
+
+        points: list[TrendPoint] = []
+        for week_key in sorted(week_buckets.keys()):
+            items = week_buckets[week_key]
+            # Use Monday of that week as date
+            year, week = int(week_key[:4]), int(week_key[6:])
+            monday = date_type.fromisocalendar(year, week, 1)
+            if dimension == "all":
+                avg_score = sum(it["total_score"] for it in items) // len(items)
+                points.append(TrendPoint(date=monday, score=avg_score))
+            else:
+                avg_dim = sum(it["dimension_scores"].get(dimension, 50) for it in items) // len(items)
+                points.append(TrendPoint(date=monday, score=avg_dim, dimension=dimension))
+        return ProgressTrendResponse(points=points)
+    else:
+        # daily
+        points: list[TrendPoint] = []
+        for s in snapshots:
+            if dimension == "all":
+                points.append(TrendPoint(date=s.snapshot_date, score=s.total_score))
+            else:
+                dim_score = s.dimension_scores.get(dimension, 50)
+                points.append(TrendPoint(date=s.snapshot_date, score=dim_score, dimension=dimension))
+        return ProgressTrendResponse(points=points)
 
 
 # --- Session Summary ---

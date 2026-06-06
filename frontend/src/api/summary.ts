@@ -74,6 +74,23 @@ export interface AchievementList {
   total_locked: number;
 }
 
+export interface TrendPoint {
+  date: string;
+  score: number;
+  dimension: string | null;
+}
+
+export interface ProgressTrend {
+  points: TrendPoint[];
+}
+
+export interface TrendParams {
+  start_date: string;
+  end_date: string;
+  dimension?: string;
+  granularity?: string;
+}
+
 export const summaryApi = {
   getSessionSummary(sessionId: string) {
     return apiClient
@@ -87,5 +104,11 @@ export const summaryApi = {
 
   getAchievements() {
     return apiClient.get<AchievementList>('/achievements').then((res) => res.data);
+  },
+
+  getProgressTrend(params: TrendParams) {
+    return apiClient
+      .get<ProgressTrend>('/progress/trend', { params })
+      .then((res) => res.data);
   },
 };

@@ -89,3 +89,15 @@ class AchievementListResponse(BaseModel):
     user_id: uuid.UUID
     achievements: list[AchievementInfo] = []
     total_locked: int = 0
+
+
+# --- Progress Trend ---
+
+class TrendPoint(BaseModel):
+    date: date
+    score: int
+    dimension: str | None = None  # None when dimension="all"
+
+
+class ProgressTrendResponse(BaseModel):
+    points: list[TrendPoint] = []
