@@ -42,8 +42,8 @@ async def _build_scene_list(db: AsyncSession) -> SceneListResponse:
                 name=s.name,
                 description=s.description,
                 thumbnail_url=s.thumbnail_url,
-                difficulty_levels=s.difficulty_levels or [],
-                tags=s.tags,
+                difficulty_levels=s.get_difficulty_levels(),
+                tags=s.get_tags(),
             )
             for s in cat.scenes
             if s.is_active

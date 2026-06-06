@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -8,8 +10,24 @@ from .api.evaluation import router as evaluation_router
 from .api.summary import router as summary_router
 from .api.ws import router as ws_router
 from .core.config import settings
+from .core.database import get_db, init_db
+from .services.seed_data import seed_scenes
 
-app = FastAPI(title=settings.app_name, debug=settings.debug)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    async for db in get_db():
+        await seed_scenes(db)
+        break
+    yield
+
+
+app = FastAPI(
+    title=settings.app_name,
+    debug=settings.debug,
+    lifespan=lifespan,
+)
 
 app.add_middleware(
     CORSMiddleware,
