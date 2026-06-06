@@ -90,7 +90,7 @@ class GrammarReportResponse(BaseModel):
 
 class GrammarCorrectRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=2000)
-    mode: str = "full"  # "light" or "full"
+    mode: Literal["light", "full"] = "full"
 
 
 class GrammarCorrectResponse(BaseModel):

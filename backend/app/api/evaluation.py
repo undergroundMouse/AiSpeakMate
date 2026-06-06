@@ -260,6 +260,8 @@ async def correct_grammar(
 ):
     """
     Instant grammar correction for given text.
+    In 'light' mode only returns corrected_text without detailed errors or suggestions.
+    In 'full' mode returns all errors, corrections, and expression suggestions.
     """
     text = req.text.strip()
     errors = _detect_grammar_errors(text)
@@ -269,6 +271,12 @@ async def correct_grammar(
     for err in sorted(errors, key=lambda x: x["span"]["start"], reverse=True):
         sp = err["span"]
         corrected = corrected[:sp["start"]] + err["correction"] + corrected[sp["end"]:]
+
+    if req.mode == "light":
+        return GrammarCorrectResponse(
+            original=text,
+            corrected_text=corrected if corrected != text else None,
+        )
 
     return GrammarCorrectResponse(
         original=text,
