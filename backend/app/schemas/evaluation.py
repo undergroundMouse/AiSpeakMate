@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -39,7 +39,7 @@ class ProsodyOut(BaseModel):
 class PronunciationEvaluateRequest(BaseModel):
     reference_text: str = Field(..., min_length=1, max_length=2000)
     language: str = "en-US"
-    detail_level: str = "full"  # "basic" or "full"
+    detail_level: Literal["basic", "full"] = "full"
 
 
 class PronunciationEvaluateResponse(BaseModel):
