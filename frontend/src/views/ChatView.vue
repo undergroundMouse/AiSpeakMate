@@ -81,6 +81,7 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useChatStore } from '@/stores/chat';
 import { useAuthStore } from '@/stores/auth';
+import { useSceneStore } from '@/stores/scene';
 
 const CORRECTION_LABELS: Record<string, string> = {
   grammar: '语法',
@@ -92,6 +93,7 @@ const route = useRoute();
 const router = useRouter();
 const chatStore = useChatStore();
 const auth = useAuthStore();
+const sceneStore = useSceneStore();
 
 const inputText = ref('');
 const messagesContainer = ref<HTMLElement | null>(null);
@@ -144,7 +146,7 @@ onMounted(() => {
     return;
   }
   const sessionId = route.params.sessionId as string;
-  chatStore.connect(sessionId, auth.token);
+  chatStore.connect(sessionId, auth.token, { sceneId: chatStore.sceneId ?? undefined });
 });
 
 onUnmounted(() => {

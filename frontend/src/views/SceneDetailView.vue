@@ -78,6 +78,7 @@ import { ref, computed, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useSceneStore } from '@/stores/scene';
 import { useAuthStore } from '@/stores/auth';
+import { useChatStore } from '@/stores/chat';
 import { sessionApi } from '@/api/session';
 
 const DIFFICULTY_MAP: Record<string, string> = {
@@ -90,6 +91,7 @@ const route = useRoute();
 const router = useRouter();
 const sceneStore = useSceneStore();
 const auth = useAuthStore();
+const chatStore = useChatStore();
 
 const errorMsg = ref('');
 const starting = ref(false);
@@ -144,6 +146,7 @@ async function startSession() {
   starting.value = true;
   try {
     const session = await sessionApi.create({ scene_id: scene.value.scene_id });
+    chatStore.sceneId = session.scene_id;
     router.push(`/chat/${session.session_id}`);
   } catch (e: any) {
     startError.value = e?.response?.data?.detail || '创建会话失败，请稍后重试';
