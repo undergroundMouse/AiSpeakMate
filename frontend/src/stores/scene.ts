@@ -1,22 +1,23 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import { sceneApi, type SceneItem, type SceneDetail } from '@/api/scene';
+import { sceneApi, type CategoryWithScenes, type SceneDetail } from '@/api/scene';
 
 export const useSceneStore = defineStore('scene', () => {
-  const scenes = ref<SceneItem[]>([]);
+  const categories = ref<CategoryWithScenes[]>([]);
   const currentScene = ref<SceneDetail | null>(null);
   const loading = ref(false);
 
-  async function fetchScenes(category?: string, difficulty?: string, search?: string) {
+  async function fetchScenes() {
     loading.value = true;
     try {
-      scenes.value = await sceneApi.list({ category, difficulty, search });
+      const response = await sceneApi.list();
+      categories.value = response.categories;
     } finally {
       loading.value = false;
     }
   }
 
-  async function fetchSceneDetail(id: string) {
+  async function fetchSceneDetail(id: number) {
     loading.value = true;
     try {
       currentScene.value = await sceneApi.getById(id);
@@ -25,5 +26,5 @@ export const useSceneStore = defineStore('scene', () => {
     }
   }
 
-  return { scenes, currentScene, loading, fetchScenes, fetchSceneDetail };
+  return { categories, currentScene, loading, fetchScenes, fetchSceneDetail };
 });

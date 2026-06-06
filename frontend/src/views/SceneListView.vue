@@ -5,7 +5,7 @@
       <h1>选择练习场景</h1>
     </header>
 
-    <!-- Search & filter -->
+    <!-- Search -->
     <div class="toolbar">
       <input
         v-model="searchQuery"
@@ -14,19 +14,6 @@
         class="search-input"
         @input="onSearch"
       />
-      <select v-model="categoryFilter" @change="loadScenes" class="filter-select">
-        <option value="">全部分类</option>
-        <option value="daily">日常</option>
-        <option value="business">商务</option>
-        <option value="travel">旅行</option>
-        <option value="academic">学术</option>
-      </select>
-      <select v-model="difficultyFilter" @change="loadScenes" class="filter-select">
-        <option value="">全部难度</option>
-        <option value="beginner">初级</option>
-        <option value="intermediate">中级</option>
-        <option value="advanced">高级</option>
-      </select>
     </div>
 
     <!-- Loading -->
@@ -36,32 +23,36 @@
     <p v-if="errorMsg" class="status error">{{ errorMsg }}</p>
 
     <!-- Empty -->
-    <p v-if="!sceneStore.loading && !errorMsg && sceneStore.scenes.length === 0" class="status">
+    <p v-if="!sceneStore.loading && !errorMsg && allScenes.length === 0" class="status">
       暂无场景数据
     </p>
 
-    <!-- Scene cards -->
-    <div v-if="sceneStore.scenes.length > 0" class="grid">
-      <div
-        v-for="scene in sceneStore.scenes"
-        :key="scene.id"
-        class="scene-card"
-        @click="goToScene(scene.id)"
-      >
-        <div class="card-header">
-          <span class="icon">{{ scene.icon || '🎯' }}</span>
-          <span class="difficulty" :class="scene.difficulty">
-            {{ DIFFICULTY_MAP[scene.difficulty] || scene.difficulty }}
-          </span>
-        </div>
-        <h3>{{ scene.title }}</h3>
-        <p class="desc">{{ scene.description }}</p>
-        <div class="card-meta">
-          <span>{{ scene.category }}</span>
-          <span v-if="scene.duration_minutes">{{ scene.duration_minutes }} 分钟</span>
-        </div>
-        <div v-if="scene.tags.length > 0" class="tags">
-          <span v-for="tag in scene.tags" :key="tag" class="tag">{{ tag }}</span>
+    <!-- Categories with scenes -->
+    <div v-for="cat in filteredCategories" :key="cat.category_id" class="category-section">
+      <h2 class="category-title">{{ cat.category_name }}</h2>
+      <div class="grid">
+        <div
+          v-for="scene in cat.scenes"
+          :key="scene.scene_id"
+          class="scene-card"
+          @click="goToScene(scene.scene_id)"
+        >
+          <div class="card-icon">{{ '🎯' }}</div>
+          <h3>{{ scene.name }}</h3>
+          <p class="desc">{{ scene.description }}</p>
+          <div v-if="scene.difficulty_levels.length > 0" class="difficulties">
+            <span
+              v-for="level in scene.difficulty_levels"
+              :key="level"
+              class="difficulty"
+              :class="level"
+            >
+              {{ DIFFICULTY_MAP[level] || level }}
+            </span>
+          </div>
+          <div v-if="scene.tags && scene.tags.length > 0" class="tags">
+            <span v-for="tag in scene.tags" :key="tag" class="tag">{{ tag }}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -69,10 +60,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { computed, ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useSceneStore } from '@/stores/scene';
 import { useAuthStore } from '@/stores/auth';
+import type { CategoryWithScenes } from '@/api/scene';
 
 const DIFFICULTY_MAP: Record<string, string> = {
   beginner: '初级',
@@ -85,33 +77,54 @@ const auth = useAuthStore();
 const router = useRouter();
 
 const searchQuery = ref('');
-const categoryFilter = ref('');
-const difficultyFilter = ref('');
 const errorMsg = ref('');
+
+const allScenes = computed(() =>
+  sceneStore.categories.flatMap((c) => c.scenes)
+);
+
+const filteredCategories = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase();
+  if (!q) return sceneStore.categories;
+
+  const results: CategoryWithScenes[] = [];
+  for (const cat of sceneStore.categories) {
+    const matchedScenes = cat.scenes.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        s.description?.toLowerCase().includes(q) ||
+        s.tags?.some((t) => t.toLowerCase().includes(q))
+    );
+    if (matchedScenes.length > 0) {
+      results.push({
+        ...cat,
+        scenes: matchedScenes,
+      });
+    }
+  }
+  return results;
+});
 
 let debounceTimer: ReturnType<typeof setTimeout>;
 
 function onSearch() {
+  // search is reactive via filteredCategories - debounce to avoid jank
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
-    loadScenes();
-  }, 350);
+    // filteredCategories recomputes automatically
+  }, 200);
 }
 
 async function loadScenes() {
   errorMsg.value = '';
   try {
-    await sceneStore.fetchScenes(
-      categoryFilter.value || undefined,
-      difficultyFilter.value || undefined,
-      searchQuery.value || undefined,
-    );
+    await sceneStore.fetchScenes();
   } catch (e: any) {
     errorMsg.value = '加载场景失败，请刷新页面重试';
   }
 }
 
-function goToScene(id: string) {
+function goToScene(id: number) {
   if (!auth.isAuthenticated) {
     router.push('/');
     return;
@@ -187,6 +200,15 @@ onMounted(() => {
   color: var(--accent-danger);
 }
 
+.category-section {
+  margin-bottom: 32px;
+}
+.category-title {
+  font-size: 1.2rem;
+  margin-bottom: 12px;
+  color: var(--text-primary);
+}
+
 /* Grid */
 .grid {
   display: grid;
@@ -205,14 +227,14 @@ onMounted(() => {
   transform: translateY(-2px);
   box-shadow: 0 8px 30px rgba(56, 189, 248, 0.15);
 }
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+.card-icon {
   margin-bottom: 10px;
-}
-.icon {
   font-size: 1.5rem;
+}
+.difficulties {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 .difficulty {
   font-size: 0.75rem;
@@ -238,13 +260,6 @@ onMounted(() => {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-}
-.card-meta {
-  display: flex;
-  justify-content: space-between;
-  color: var(--text-secondary);
-  font-size: 0.8rem;
-  margin-bottom: 8px;
 }
 .tags {
   display: flex;

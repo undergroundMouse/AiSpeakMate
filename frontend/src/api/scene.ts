@@ -1,55 +1,67 @@
 import apiClient from './client';
 
-export interface SceneItem {
-  id: string;
-  title: string;
+export interface SceneBrief {
+  scene_id: number;
+  name: string;
   description: string;
-  icon: string | null;
-  difficulty: string;
-  category: string;
-  duration_minutes: number;
+  thumbnail_url: string | null;
+  difficulty_levels: string[];
   tags: string[];
-  is_custom: boolean;
 }
 
-export interface SceneDetail extends SceneItem {
-  prompt_template: string;
-  suggested_phrases: string[];
-  created_at: string;
+export interface CategoryWithScenes {
+  category_id: number;
+  category_name: string;
+  icon_url: string | null;
+  scenes: SceneBrief[];
 }
 
-export interface CustomSceneCreate {
-  title: string;
-  description?: string;
-  prompt_template: string;
-  icon?: string;
-  difficulty?: string;
-  category?: string;
-  tags?: string[];
+export interface SceneListResponse {
+  categories: CategoryWithScenes[];
 }
 
-export interface SceneListParams {
-  category?: string;
-  difficulty?: string;
-  search?: string;
-  skip?: number;
-  limit?: number;
+export interface VocabItem {
+  word: string;
+  phonetic: string | null;
+  audio_url: string | null;
+  translation: string | null;
+}
+
+export interface SentencePatternItem {
+  pattern: string;
+  translation: string | null;
+  example: string | null;
+}
+
+export interface SceneDetail {
+  scene_id: number;
+  name: string;
+  role_prompt: string;
+  opening_line: string;
+  vocab_list: VocabItem[];
+  sentence_patterns: SentencePatternItem[];
+  difficulty_settings: Record<string, any> | null;
+  suggested_duration_minutes: number | null;
+}
+
+export interface CustomSceneRequest {
+  topic: string;
+  role: string;
+  difficulty: string;
+  focus_grammar?: string;
+  focus_vocab?: string;
 }
 
 export const sceneApi = {
-  list(params?: SceneListParams) {
-    return apiClient.get<SceneItem[]>('/scenes', { params }).then((res) => res.data);
+  list() {
+    return apiClient.get<SceneListResponse>('/scenes').then((res) => res.data);
   },
 
-  getById(id: string) {
+  getById(id: number) {
     return apiClient.get<SceneDetail>(`/scenes/${id}`).then((res) => res.data);
   },
 
-  createCustom(data: CustomSceneCreate) {
-    return apiClient.post<SceneItem>('/scenes/custom', data).then((res) => res.data);
-  },
-
-  deleteCustom(id: string) {
-    return apiClient.delete(`/scenes/custom/${id}`).then((res) => res.data);
+  createCustom(data: CustomSceneRequest) {
+    return apiClient.post<{ custom_scene_id: string; topic: string }>('/scenes/custom', data).then((res) => res.data);
   },
 };
