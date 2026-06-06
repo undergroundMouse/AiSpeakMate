@@ -91,6 +91,26 @@ export interface TrendParams {
   granularity?: string;
 }
 
+export interface WeaknessDistItem {
+  category: string;
+  item: string;
+  total_error_count: number;
+  trend: string | null;
+}
+
+export interface WeaknessDistResponse {
+  user_id: string;
+  period_start: string;
+  period_end: string;
+  items: WeaknessDistItem[];
+}
+
+export interface WeaknessDistParams {
+  start_date: string;
+  end_date: string;
+  category?: string;
+}
+
 export const summaryApi = {
   getSessionSummary(sessionId: string) {
     return apiClient
@@ -111,4 +131,12 @@ export const summaryApi = {
       .get<ProgressTrend>('/progress/trend', { params })
       .then((res) => res.data);
   },
+
+  getWeaknessDistribution(params: WeaknessDistParams) {
+    return apiClient
+      .get<WeaknessDistResponse>('/progress/weaknesses/distribution', { params })
+      .then((res) => res.data);
+  },
 };
+
+

@@ -101,3 +101,19 @@ class TrendPoint(BaseModel):
 
 class ProgressTrendResponse(BaseModel):
     points: list[TrendPoint] = []
+
+
+# --- Weakness Distribution ---
+
+class WeaknessDistItem(BaseModel):
+    category: str
+    item: str
+    total_error_count: int
+    trend: str | None = None
+
+
+class WeaknessDistResponse(BaseModel):
+    user_id: uuid.UUID
+    period_start: date
+    period_end: date
+    items: list[WeaknessDistItem] = []

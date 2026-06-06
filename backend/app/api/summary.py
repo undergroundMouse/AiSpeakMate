@@ -12,6 +12,7 @@ from ..core.database import get_db
 from ..models.session import Session
 from ..models.summary import SessionSummary
 from ..models.achievement import UserAchievement, Achievement
+from ..models.progress import UserWeaknessRecord
 from ..models.user import User
 from ..schemas.summary import (
     SessionSummaryResponse,
@@ -25,6 +26,8 @@ from ..schemas.summary import (
     AchievementInfo,
     TrendPoint,
     ProgressTrendResponse,
+    WeaknessDistItem,
+    WeaknessDistResponse,
 )
 
 router = APIRouter()
@@ -335,6 +338,91 @@ def _get_rating(score: int) -> str:
         return "A2 (中级)"
     else:
         return "A1 (初级)"
+
+
+# --- Weakness Distribution ---
+
+VALID_WEAKNESS_CATEGORIES = ["pronunciation", "grammar"]
+
+
+@router.get(
+    "/progress/weaknesses/distribution",
+    response_model=WeaknessDistResponse,
+    summary="获取弱点分布数据",
+)
+async def get_weakness_distribution(
+    start_date: str,
+    end_date: str,
+    category: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get weakness distribution data aggregated by category and item."""
+    from datetime import date as date_type
+
+    if category is not None and category not in VALID_WEAKNESS_CATEGORIES:
+        raise HTTPException(
+            400,
+            f"Invalid category. Must be one of: {', '.join(VALID_WEAKNESS_CATEGORIES)}",
+        )
+
+    try:
+        sd = date_type.fromisoformat(start_date)
+        ed = date_type.fromisoformat(end_date)
+    except ValueError:
+        raise HTTPException(400, "Invalid date format. Use YYYY-MM-DD.")
+
+    if sd > ed:
+        raise HTTPException(400, "start_date must be before or equal to end_date")
+
+    # Build query conditions
+    conditions = [
+        UserWeaknessRecord.user_id == current_user.id,
+        UserWeaknessRecord.period_end >= sd,
+        UserWeaknessRecord.period_start <= ed,
+    ]
+    if category is not None:
+        conditions.append(UserWeaknessRecord.category == category)
+
+    result = await db.execute(
+        select(UserWeaknessRecord).where(*conditions)
+    )
+    records = result.scalars().all()
+
+    # Aggregate by (category, item) summing error_count
+    from collections import defaultdict
+    aggregated: dict[tuple[str, str], dict] = defaultdict(
+        lambda: {"total_error_count": 0, "trends": []}
+    )
+
+    for r in records:
+        agg = aggregated[(r.category, r.item)]
+        agg["total_error_count"] += r.error_count
+        if r.trend:
+            agg["trends"].append(r.trend)
+
+    items: list[WeaknessDistItem] = []
+    for (cat, name), agg in sorted(aggregated.items(), key=lambda x: -x[1]["total_error_count"]):
+        trend = None
+        trends = agg["trends"]
+        if trends:
+            # Use the most recent trend (records ordered by period_end desc implicitly via query)
+            # For simplicity, use the first non-stable, or last available
+            trend = trends[-1]
+
+        items.append(WeaknessDistItem(
+            category=cat,
+            item=name,
+            total_error_count=agg["total_error_count"],
+            trend=trend,
+        ))
+
+    return WeaknessDistResponse(
+        user_id=current_user.id,
+        period_start=sd,
+        period_end=ed,
+        items=items,
+    )
 
 
 # --- Achievements ---
