@@ -61,10 +61,19 @@ async def generate_response(
     user_message: str,
     system_prompt: str,
     conversation_history: list[dict] | None = None,
+    temperature: float = 0.7,
+    max_tokens: int = 500,
 ) -> str | None:
     """Generate AI response via configured LLM provider.
 
     Falls back to None if no API key configured.
+
+    Args:
+        user_message: The user's input text
+        system_prompt: System-level instructions for the AI
+        conversation_history: Previous messages in the conversation
+        temperature: 0.0–2.0; lower = more focused/deterministic (0.6–0.7 for scene roleplay)
+        max_tokens: Maximum response length
     """
     client = _get_client()
     if client is None:
@@ -73,7 +82,8 @@ async def generate_response(
     messages = [{"role": "system", "content": system_prompt}]
 
     if conversation_history:
-        for msg in conversation_history[-10:]:
+        # Include more history for better context
+        for msg in conversation_history[-20:]:
             messages.append({"role": msg["role"], "content": msg["content"]})
 
     messages.append({"role": "user", "content": user_message})
@@ -82,8 +92,8 @@ async def generate_response(
         response = await client.chat.completions.create(
             model=_get_model(),
             messages=messages,
-            max_tokens=300,
-            temperature=0.7,
+            max_tokens=max_tokens,
+            temperature=temperature,
         )
         return response.choices[0].message.content
     except Exception as e:

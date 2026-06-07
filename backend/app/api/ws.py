@@ -1,12 +1,13 @@
 import json
-import random
 import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
+from ..core.config import settings
 from ..core.database import get_db
 from ..core.security import decode_access_token
 from ..models.evaluation import (
@@ -70,45 +71,43 @@ async def _store_pronunciation_evaluation(
     utterance: Utterance,
     text: str,
 ) -> PronunciationEvaluation:
-    """Generate and persist a simulated pronunciation evaluation for a user utterance."""
-    words = text.split()
-    overall = random.randint(55, 95)
-    pronunciation_score = random.randint(50, 100)
-    fluency_score = random.randint(50, 100)
-    completeness_score = random.randint(80, 100)
-    prosody_score = random.randint(50, 100)
+    """Generate and persist a text-analysis-based pronunciation evaluation.
+
+    Scores are computed from the actual user text — analyzing word complexity,
+    difficult phonemes for Chinese speakers, sentence structure, and completeness.
+    No random values are used.
+    """
+    analysis = _analyze_text(text)
 
     evaluation = PronunciationEvaluation(
         utterance_id=utterance.id,
-        overall_score=overall,
-        pronunciation_score=pronunciation_score,
-        fluency_score=fluency_score,
-        completeness_score=completeness_score,
-        prosody_score=prosody_score,
-        advice=_generate_pronunciation_advice(overall),
+        overall_score=analysis["overall"],
+        pronunciation_score=analysis["pronunciation_score"],
+        fluency_score=analysis["fluency_score"],
+        completeness_score=analysis["completeness_score"],
+        prosody_score=analysis["prosody_score"],
+        advice=analysis["advice"],
     )
     db.add(evaluation)
     await db.flush()
 
-    # Generate per-word phoneme scores
-    for word in words[:10]:  # limit to first 10 words
-        clean_word = word.strip(".,!?;:\"'")
-        if not clean_word:
-            continue
-        word_score = random.randint(50, 100)
-        # Simulate 1-4 phonemes per word
-        phoneme_count = min(len(clean_word), 4)
-        for i, ch in enumerate(clean_word[:phoneme_count]):
-            ps = random.randint(40, 100)
-            is_err = ps < 60
+    # Generate per-word phoneme scores based on actual text analysis
+    words = [w.strip(".,!?;:\"'()") for w in text.split()]
+    words = [w for w in words[:10] if w]  # limit to first 10 real words
+
+    for word in words:
+        phonemes = _get_word_phonemes(word)
+        word_score = _score_word_pronunciation(word)
+        for i, (ph, is_diff) in enumerate(phonemes):
+            ph_score = max(40, min(100, word_score - (15 if is_diff else 0)))
             db.add(PhonemeScore(
                 evaluation_id=evaluation.id,
-                word=clean_word,
+                word=word,
                 word_score=word_score,
-                phoneme=f"/{ch}/",
-                phoneme_score=ps,
-                is_error=is_err,
-                suggested_phoneme=f"/{ch}/" if is_err else None,
+                phoneme=ph,
+                phoneme_score=ph_score,
+                is_error=is_diff,
+                suggested_phoneme=f"{ph} (注意发音)" if is_diff else None,
                 start_time_ms=i * 200,
                 end_time_ms=(i + 1) * 200,
             ))
@@ -116,6 +115,144 @@ async def _store_pronunciation_evaluation(
     await db.commit()
     await db.refresh(evaluation)
     return evaluation
+
+
+# ── Text analysis helpers ────────────────────────────────────────────
+
+# Phonemes that are challenging for Chinese English learners
+_DIFFICULT_PATTERNS: list[tuple[str, str]] = [
+    ("th", "/θ/"), ("th", "/ð/"), ("v", "/v/"), ("r", "/r/"),
+    ("zh", "/ʒ/"), ("sh", "/ʃ/"), ("ch", "/tʃ/"),
+    ("tion", "/ʃən/"), ("sure", "/ʒər/"),
+]
+
+# Mapping: first letter(s) → IPA phoneme for scoring
+_PHONEME_MAP: dict[str, str] = {
+    "a": "/eɪ/", "b": "/b/", "c": "/k/", "d": "/d/", "e": "/iː/",
+    "f": "/f/", "g": "/ɡ/", "h": "/h/", "i": "/aɪ/", "j": "/dʒ/",
+    "k": "/k/", "l": "/l/", "m": "/m/", "n": "/n/", "o": "/oʊ/",
+    "p": "/p/", "q": "/kw/", "r": "/r/", "s": "/s/", "t": "/t/",
+    "u": "/juː/", "v": "/v/", "w": "/w/", "x": "/eks/", "y": "/j/", "z": "/z/",
+}
+
+
+def _get_word_phonemes(word: str) -> list[tuple[str, bool]]:
+    """Return phoneme representations for a word, marking difficult ones."""
+    result: list[tuple[str, bool]] = []
+    word_lower = word.lower()
+    i = 0
+    while i < len(word_lower):
+        # Check multi-char patterns first
+        matched = False
+        for pattern, ph in _DIFFICULT_PATTERNS:
+            if word_lower[i:].startswith(pattern):
+                result.append((ph, True))  # difficult phoneme
+                i += len(pattern)
+                matched = True
+                break
+        if not matched:
+            ch = word_lower[i]
+            ph = _PHONEME_MAP.get(ch, f"/{ch}/")
+            result.append((ph, False))
+            i += 1
+    if not result:
+        result.append((f"/{word}/", False))
+    return result
+
+
+def _score_word_pronunciation(word: str) -> int:
+    """Score pronunciation difficulty for a word (higher = easier for Chinese speaker)."""
+    word_lower = word.lower()
+    difficulty_penalty = 0
+    for pattern, _ in _DIFFICULT_PATTERNS:
+        if pattern in word_lower:
+            difficulty_penalty += 12
+    length_penalty = max(0, (len(word) - 5) * 3)
+    return max(40, min(100, 90 - difficulty_penalty - length_penalty))
+
+
+def _analyze_text(text: str) -> dict:
+    """Analyze English text for pronunciation/fluency characteristics."""
+    raw_words = text.strip().split()
+    clean_words = [w.strip(".,!?;:\"'()") for w in raw_words]
+    clean_words = [w for w in clean_words if w]
+
+    if not clean_words:
+        return {
+            "overall": 65, "pronunciation_score": 65, "fluency_score": 65,
+            "completeness_score": 70, "prosody_score": 65,
+            "advice": "试着说点什么吧！从简单的句子开始练习。",
+        }
+
+    # Count difficult phonemes across all words
+    difficult_count = 0
+    for word in clean_words:
+        for pattern, _ in _DIFFICULT_PATTERNS:
+            if pattern in word.lower():
+                difficult_count += 1
+
+    # Pronunciation: penalized by difficult phoneme density
+    diff_density = difficult_count / max(len(clean_words), 1)
+    pronunciation_score = max(40, min(95, 85 - int(diff_density * 35)))
+
+    # Fluency: longer words + reasonable sentence complexity → higher fluency
+    avg_word_len = sum(len(w) for w in clean_words) / max(len(clean_words), 1)
+    sentences = max(1, text.count('.') + text.count('!') + text.count('?') + text.count('\n'))
+    wps = len(clean_words) / sentences  # words per sentence
+    fluency_score = max(40, min(95, 50 + int(wps * 3) + int(avg_word_len * 2)))
+
+    # Completeness: response forms a complete thought
+    first_word = clean_words[0].lower() if clean_words else ""
+    has_subject = first_word in {
+        "i", "you", "he", "she", "it", "we", "they",
+        "this", "that", "these", "those", "there", "the", "a", "an",
+        "my", "your", "his", "her", "our", "their",
+        "yes", "no", "well", "ok", "okay", "maybe", "sure",
+        "what", "when", "where", "why", "how", "who",
+        "can", "could", "would", "should", "will", "do", "does", "did",
+        "please", "let", "thanks", "thank",
+    }
+    word_count = len(clean_words)
+    if word_count >= 6 and has_subject:
+        completeness = 95
+    elif word_count >= 3:
+        completeness = 80
+    else:
+        completeness = 65
+
+    # Prosody: based on punctuation variety and sentence structure
+    has_comma = ',' in text
+    has_period = any(c in text for c in '.!?')
+    prosody_score = 65 + (10 if has_comma else 0) + (10 if has_period else 0)
+    prosody_score = min(90, prosody_score)
+
+    # Overall weighted score
+    overall = int(pronunciation_score * 0.35 + fluency_score * 0.30
+                  + completeness * 0.20 + prosody_score * 0.15)
+
+    # Generate advice
+    advice_parts = []
+    if pronunciation_score < 65:
+        advice_parts.append("注意 /θ/ /ð/ /v/ 等音素的发音位置")
+    if fluency_score < 65:
+        advice_parts.append("尝试使用更长的句子，增加表达流畅度")
+    if completeness < 75:
+        advice_parts.append("尽量说完整的句子")
+    if overall >= 80:
+        advice = "发音和流畅度都很棒！继续保持。"
+    elif advice_parts:
+        advice = "；".join(advice_parts[:2]) + "。"
+    else:
+        advice = "表现不错，继续练习提升流利度。"
+
+    return {
+        "overall": overall,
+        "pronunciation_score": pronunciation_score,
+        "fluency_score": fluency_score,
+        "completeness_score": completeness,
+        "prosody_score": prosody_score,
+        "advice": advice,
+    }
 
 
 async def _store_grammar_errors(
@@ -269,24 +406,10 @@ async def _store_grammar_errors(
 
 
 def _simulate_asr_from_audio() -> str:
-    """Simulate ASR recognition from voice input.
-    Returns a random plausible English practice phrase since no real ASR is integrated."""
-    phrases = [
-        "hello",
-        "hi there",
-        "I'd like to order a coffee please",
-        "can I have the menu",
-        "thank you very much",
-        "how are you today",
-        "I'm doing well thanks",
-        "could you help me please",
-        "what do you recommend",
-        "that sounds great",
-        "I have a question",
-        "nice to meet you",
-    ]
-    import random as _rand
-    return _rand.choice(phrases)
+    """Return empty string when no ASR text could be recognized from audio.
+    The frontend provides ASR text via browser SpeechRecognition in normal operation,
+    so this fallback is only reached when both recognition and audio upload fail."""
+    return ""
 
 
 def _generate_pronunciation_advice(score: int) -> str:
@@ -308,14 +431,85 @@ async def _get_session_data(db: AsyncSession, session_id: uuid.UUID):
 
     scene_data = None
     if session.scene_id:
-        scene_result = await db.execute(select(Scene).where(Scene.id == session.scene_id))
+        scene_result = await db.execute(
+            select(Scene)
+            .where(Scene.id == session.scene_id)
+            .options(
+                selectinload(Scene.vocabulary),
+                selectinload(Scene.sentence_patterns),
+            )
+        )
         scene = scene_result.scalar_one_or_none()
         if scene:
+            vocab_list = [
+                {"word": v.word, "translation": v.translation or "", "phonetic": v.phonetic or ""}
+                for v in (scene.vocabulary or [])
+            ]
+            pattern_list = [
+                {"pattern": p.pattern, "translation": p.translation or ""}
+                for p in (scene.sentence_patterns or [])
+            ]
             scene_data = {
                 "role_prompt": scene.role_prompt,
                 "opening_line": scene.opening_line,
                 "difficulty_settings": scene.difficulty_settings or {},
+                "scene_name": scene.name or "",
+                "description": scene.description or "",
+                "vocab_list": vocab_list,
+                "sentence_patterns": pattern_list,
             }
+
+    # Load custom scene data — first from active_connections (live session), then from DB
+    conn_info = active_connections.get(session_id, {})
+    custom_role = conn_info.get("custom_role_prompt", "")
+    custom_desc = conn_info.get("custom_description", "")
+    custom_scene_name = conn_info.get("custom_scene_name", "")
+    custom_vocab: list = conn_info.get("custom_vocab_list", []) or []
+    custom_patterns: list = conn_info.get("custom_sentence_patterns", []) or []
+
+    # Fallback: look up custom_scene from DB if session has custom_scene_id
+    if session.custom_scene_id:
+        from ..models.custom_scene import CustomScene as CustomSceneModel
+        cs_result = await db.execute(
+            select(CustomSceneModel).where(CustomSceneModel.id == session.custom_scene_id)
+        )
+        custom_scene_row = cs_result.scalar_one_or_none()
+        if custom_scene_row and custom_scene_row.prompt_snapshot:
+            try:
+                import json as _cs_json
+                cs_data = _cs_json.loads(custom_scene_row.prompt_snapshot)
+                if not custom_role:
+                    custom_role = cs_data.get("role_prompt", "")
+                if not custom_desc:
+                    custom_desc = cs_data.get("description", "")
+                if not custom_scene_name:
+                    custom_scene_name = cs_data.get("topic", "")
+                if not custom_vocab:
+                    custom_vocab = cs_data.get("vocab_list", []) or cs_data.get("vocabulary", []) or []
+                if not custom_patterns:
+                    custom_patterns = cs_data.get("sentence_patterns", []) or cs_data.get("patterns", []) or []
+            except Exception:
+                pass
+        # Also use DB columns as fallback
+        if not custom_vocab and custom_scene_row and custom_scene_row.focus_vocab:
+            custom_vocab = [{"word": w, "translation": ""} for w in custom_scene_row.focus_vocab if w]
+        if not custom_patterns and custom_scene_row and custom_scene_row.focus_grammar:
+            custom_patterns = [{"pattern": p, "translation": ""} for p in custom_scene_row.focus_grammar if p]
+
+    # Override scene_data with custom scene info
+    if custom_role or custom_vocab or custom_patterns:
+        if not scene_data:
+            scene_data = {}
+        if custom_role:
+            scene_data["role_prompt"] = custom_role
+        if custom_desc:
+            scene_data["description"] = custom_desc
+        if custom_scene_name:
+            scene_data["scene_name"] = custom_scene_name
+        if custom_vocab:
+            scene_data["vocab_list"] = custom_vocab
+        if custom_patterns:
+            scene_data["sentence_patterns"] = custom_patterns
 
     # count existing utterances for sequence
     stmt = select(Utterance).where(Utterance.session_id == session_id)
@@ -341,74 +535,131 @@ SCENE_KEYWORDS = {
 }
 
 
-def _check_scene_drift(text: str, scene_name: str) -> str | None:
+def _check_scene_drift(text: str, scene_data: dict | None) -> str | None:
     """Check if user input drifts off-topic for the scene. Returns reminder or None."""
-    keywords = SCENE_KEYWORDS.get(scene_name, set())
+    if not scene_data:
+        return None
+    scene_name = scene_data.get("scene_name", "")
+    text_lower = text.lower()
+    words = set(text_lower.split())
+
+    # Build keywords: known scene keywords + dynamic from vocab/description
+    keywords: set[str] = set()
+    # Known scene keywords
+    known_kw = SCENE_KEYWORDS.get(scene_name, set())
+    keywords.update(known_kw)
+    # Dynamic keywords from vocab_list
+    for v in scene_data.get("vocab_list", []):
+        if isinstance(v, dict):
+            w = (v.get("word", "") or "").lower()
+        else:
+            w = str(v).lower()
+        if w and len(w) > 2:
+            keywords.add(w)
+    # Dynamic keywords from description (extract nouns/noun phrases)
+    desc = (scene_data.get("description", "") or "").lower()
+    for word in desc.split():
+        w = word.strip(".,!?;:()\"'，。！？；：（）")
+        if len(w) > 3 and w not in {"this", "that", "with", "from", "your", "about", "practice", "scene", "conversation"}:
+            keywords.add(w)
+
     if not keywords:
         return None
 
-    words = set(text.lower().split())
-    # Also check longer phrases
-    text_lower = text.lower()
     match_count = sum(1 for kw in keywords if kw in text_lower)
 
     if match_count == 0:
         # Only warn for substantive messages (5+ words)
         if len(words) >= 5:
-            reminders = {
-                "coffee shop": "Let's stay focused on ordering at the café. What drink would you like?",
-                "restaurant": "Let's keep our conversation about dining. What would you like to order?",
-                "clothing store": "Let's get back to shopping. What are you looking for today?",
-                "airport": "Let's focus on your flight. Do you have your travel documents ready?",
-                "hotel": "Let's talk about your hotel stay. How can I assist with your reservation?",
-                "street": "Let's get back to finding your way. Where are you trying to go?",
-                "job interview": "Let's return to the interview. Can you tell me about your work experience?",
-                "business meeting": "Let's get back to our meeting agenda. Any updates on your tasks?",
-            }
-            return reminders.get(scene_name, "Let's stay focused on our conversation topic. Can we get back to it?")
+            topic = scene_name or desc or "our conversation"
+            return f"Let's stay focused on {topic}. Can we get back to it?"
     return None
+
+
+def _extract_role_from_scene(scene_data: dict | None) -> tuple[str, str]:
+    """Extract a human-readable role name and scene name from scene data."""
+    if not scene_data:
+        return "a conversation partner", ""
+
+    role_prompt = (scene_data.get("role_prompt", "") or "").lower()
+    scene_name = scene_data.get("scene_name", "") or ""
+    description = scene_data.get("description", "") or ""
+
+    # Known role patterns
+    role_patterns = [
+        ("barista", "the barista", "coffee shop"),
+        ("waiter", "the waiter", "restaurant"),
+        ("waitress", "the waitress", "restaurant"),
+        ("sales assistant", "the sales assistant", "clothing store"),
+        ("shop assistant", "the shop assistant", "clothing store"),
+        ("check-in agent", "the check-in agent", "airport"),
+        ("receptionist", "the receptionist", "hotel"),
+        ("front desk", "the front desk agent", "hotel"),
+        ("local", "a friendly local", "street"),
+        ("tour guide", "the tour guide", "street"),
+        ("hr manager", "the HR manager", "job interview"),
+        ("interviewer", "the interviewer", "job interview"),
+        ("team lead", "the team lead", "business meeting"),
+        ("doctor", "the doctor", "hospital"),
+        ("nurse", "the nurse", "hospital"),
+        ("pharmacist", "the pharmacist", "pharmacy"),
+        ("teacher", "the teacher", "classroom"),
+        ("librarian", "the librarian", "library"),
+        ("bank teller", "the bank teller", "bank"),
+        ("police officer", "the police officer", "police station"),
+        ("travel agent", "the travel agent", "travel agency"),
+        ("customer service", "the customer service agent", "customer support"),
+        ("coworker", "your coworker", "office"),
+        ("friend", "your friend", "casual conversation"),
+    ]
+
+    for pattern, role_label, scene_label in role_patterns:
+        if pattern in role_prompt:
+            return role_label, scene_label
+
+    # Fallback: extract from scene description
+    if scene_name:
+        return f"the {scene_name} partner", scene_name
+    if description:
+        return "a conversation partner", description[:30]
+    return "a conversation partner", scene_name
 
 
 def _simulate_llm_response(
     text: str,
     scene_data: dict | None,
 ) -> str:
-    """Generate a contextual AI response based on user input and scene context."""
+    """Generate a contextual AI response based on user input and scene context.
+
+    Uses scene vocabulary, patterns, and description to stay on-topic even
+    when the LLM API is unavailable.
+    """
     lower = text.strip().lower().rstrip(".!?")
 
-    # Extract key words from user input for contextual response
-    words = set(lower.split())
-    keywords = [w for w in words if len(w) > 2]
-
     # Determine the scene role
-    role = "a conversation partner"
-    scene_name = ""
+    role, scene_name = _extract_role_from_scene(scene_data)
+
+    # Get scene vocab for contextual responses
+    vocab_words: list[str] = []
     if scene_data:
-        role_prompt = scene_data.get("role_prompt", "")
-        if "barista" in role_prompt:
-            role = "the barista"
-            scene_name = "coffee shop"
-        elif "waiter" in role_prompt:
-            role = "the waiter"
-            scene_name = "restaurant"
-        elif "sales assistant" in role_prompt:
-            role = "the sales assistant"
-            scene_name = "clothing store"
-        elif "check-in agent" in role_prompt:
-            role = "the check-in agent"
-            scene_name = "airport"
-        elif "receptionist" in role_prompt:
-            role = "the receptionist"
-            scene_name = "hotel"
-        elif "local" in role_prompt:
-            role = "a friendly local"
-            scene_name = "street"
-        elif "HR manager" in role_prompt or "interview" in role_prompt:
-            role = "the HR manager"
-            scene_name = "job interview"
-        elif "team lead" in role_prompt or "meeting" in role_prompt:
-            role = "the team lead"
-            scene_name = "business meeting"
+        for v in scene_data.get("vocab_list", []):
+            if isinstance(v, dict):
+                w = v.get("word", "")
+            else:
+                w = str(v)
+            if w and len(w) > 1:
+                vocab_words.append(w.lower())
+
+    # Get scene patterns for template usage
+    patterns: list[str] = []
+    if scene_data:
+        for p in scene_data.get("sentence_patterns", []):
+            if isinstance(p, dict):
+                pt = p.get("pattern", "")
+            else:
+                pt = str(p)
+            if pt:
+                patterns.append(pt)
 
     # --- Greetings ---
     if lower in ("hello", "hi", "hey", "hi there", "good morning", "good afternoon", "good evening"):
@@ -423,88 +674,52 @@ def _simulate_llm_response(
     if lower in ("bye", "goodbye", "see you", "see you later"):
         return "Goodbye! It was great talking with you. Keep practicing your English!"
 
+    # --- Scene drift check ---
+    drift_msg = _check_scene_drift(text, scene_data)
+    if drift_msg:
+        return drift_msg
+
     # --- Scene-specific contextual responses ---
     if "how are you" in lower:
         return f"I'm doing great, thanks for asking! Now, {_scene_prompt(scene_data)}"
 
-    # Questions about self
-    if any(w in words for w in ("name", "who", "your")):
-        return f"I'm {role}, here to help you practice English in this {scene_name}. But let's focus on you — tell me about yourself!"
+    # Questions about self / who are you
+    if any(w in lower.split() for w in ("who", "name", "your")) and "you" in lower.split():
+        return f"I'm {role}, here to help you practice English. But let's focus on you — {_scene_prompt(scene_data)}"
 
-    # Scene drift check — run BEFORE topic keywords so off-topic gets caught
-    if scene_name:
-        drift_msg = _check_scene_drift(text, scene_name)
-        if drift_msg:
-            return drift_msg
+    # Scene-specific ordering/requesting (only for service-oriented scenes)
+    order_words = {"order", "buy", "purchase", "book", "reserve"}
+    request_phrases = ["i'd like", "i would like", "can i get", "could i have", "may i have"]
+    is_order_scene = scene_name in ("coffee shop", "restaurant", "hotel", "airport", "clothing store")
 
-    # Order/food related
-    if any(w in words for w in ("want", "would like", "i'd like", "order", "have", "get", "buy")):
-        item = _extract_keyword_after(text, ["want", "would like", "order", "have", "get", "buy", "i'd like"])
-        if item:
-            return f"Great choice! One {item} coming right up. Can I get you anything else?"
-        return f"Sure! What exactly would you like? Tell me more about what you're looking for."
+    if any(w in lower.split() for w in order_words) or any(ph in lower for ph in request_phrases):
+        if is_order_scene:
+            item = _extract_keyword_after(text, ["order", "buy", "i'd like", "i would like", "can i get", "could i have", "may i have"])
+            if item:
+                return f"Great choice! One {item} coming right up. Can I get you anything else?"
+            return f"Sure! What exactly would you like? Tell me more about what you're looking for."
+        else:
+            # Non-service scene — acknowledge request without restaurant framing
+            return f"I'd be happy to help with that. {_scene_prompt(scene_data)}"
 
-    # Food/drink specific
-    if any(w in words for w in ("coffee", "tea", "latte", "espresso", "cappuccino", "drink", "water", "juice", "menu")):
-        drink = next((w for w in ("coffee", "tea", "latte", "espresso", "cappuccino") if w in words), "that")
-        size_q = "What size would you like — small, medium, or large?" if drink else ""
-        return f"Ah, {drink}! Excellent choice. {size_q}"
+    # Scene vocabulary matches — respond with contextual acknowledgment
+    matched_vocab = [w for w in vocab_words if w in lower]
+    if matched_vocab:
+        word = matched_vocab[0]
+        # Use a scene pattern if available
+        if patterns:
+            import random
+            pattern = random.choice(patterns)
+            return f"Ah, {word} — great word! {pattern}. What else can you tell me?"
+        return f"Ah, '{word}' — that's relevant to our conversation! Tell me more about that."
 
-    if any(w in words for w in ("food", "eat", "hungry", "meal", "lunch", "dinner", "breakfast", "appetizer", "steak", "chicken", "fish", "salad")):
-        food = next((w for w in ("steak", "chicken", "fish", "salad", "meal") if w in words), "that dish")
-        return f"{food.capitalize()} sounds perfect! How would you like it prepared?"
-
-    # Shopping related
-    if any(w in words for w in ("size", "medium", "large", "small", "fit", "try", "wear", "color", "price", "sale", "cheap", "expensive")):
-        return f"Let me help you find the right size. What size do you normally wear?"
-
-    # Travel/airport
-    if any(w in words for w in ("flight", "fly", "airport", "boarding", "luggage", "baggage", "passport", "ticket", "seat")):
-        return f"I'll help you with that. May I see your booking confirmation? Do you have any luggage to check in?"
-
-    # Hotel
-    if any(w in words for w in ("room", "hotel", "stay", "night", "reservation", "book", "check-in", "checkout")):
-        return f"Let me check your reservation. How many nights will you be staying with us?"
-
-    # Directions
-    if any(w in words for w in ("where", "direction", "how do i get", "find", "lost", "way", "street", "road", "turn", "left", "right", "straight")):
-        return f"Ah, let me help you find your way. Do you see that big building over there? Go straight for two blocks and turn left at the traffic light."
-
-    # Interview
-    if any(w in words for w in ("experience", "skill", "job", "work", "company", "resume", "cv", "strength", "weakness", "career", "salary")):
-        return f"That's interesting! Tell me more about your experience. What would you say is your greatest strength?"
-
-    # Meeting
-    if any(w in words for w in ("project", "deadline", "meeting", "report", "team", "plan", "update", "task", "timeline", "budget")):
-        return f"Good point. Could you elaborate on that? I'd like to hear more details about the timeline."
-
-    # Recommendations / suggestions
-    if any(w in words for w in ("recommend", "suggest", "suggestion", "popular", "best", "special")):
-        return f"I'd recommend our house special. It's very popular! Would you like to try that?"
-
-    # Opinions / I think / I believe
+    # Opinions / I think
     if any(phrase in lower for phrase in ("i think", "i believe", "in my opinion", "i feel", "i guess")):
         return f"Interesting perspective! Why do you feel that way? Tell me more."
 
     # Likes / preferences
-    if any(w in words for w in ("like", "love", "enjoy", "prefer", "favorite", "hate", "dislike")):
+    if any(w in lower.split() for w in ("like", "love", "enjoy", "prefer", "favorite", "hate", "dislike")):
         return f"Oh really? That's fascinating! What do you like most about it?"
-
-    # Weather
-    if any(w in words for w in ("weather", "rain", "sunny", "hot", "cold", "warm", "cloudy", "snow")):
-        return f"Yes, the weather has been quite interesting lately! How does it affect your plans?"
-
-    # Time / schedule
-    if any(w in words for w in ("time", "today", "tomorrow", "week", "month", "schedule", "plan", "busy", "free")):
-        return f"I see. What time works best for you? Let's plan around your schedule."
-
-    # Background / about self
-    if any(w in words for w in ("student", "teacher", "engineer", "doctor", "work", "study", "learn", "school", "university", "college")):
-        return f"That's great! Tell me more about what you do. What's the most challenging part?"
-
-    # Hobbies / free time
-    if any(w in words for w in ("hobby", "hobbies", "free time", "weekend", "fun", "sport", "music", "movie", "book", "read", "game", "play")):
-        return f"Sounds like fun! How often do you do that?"
 
     # Yes/No short answers
     if lower in ("yes", "yeah", "yep", "sure", "ok", "okay"):
@@ -514,11 +729,15 @@ def _simulate_llm_response(
         return f"I understand. Is there something else you'd prefer instead?"
 
     # Generic: reference the user's topic
-    if keywords:
-        topic = keywords[0] if len(keywords[0]) > 3 else (keywords[1] if len(keywords) > 1 else keywords[0])
+    topic_words = [w for w in lower.split() if len(w) > 3]
+    if topic_words:
+        topic = topic_words[0]
         return f"That's interesting what you said about '{topic}'. Can you tell me more about that?"
 
-    # Fallback with scene context
+    # Fallback with scene description
+    desc = scene_data.get("description", "") if scene_data else ""
+    if desc:
+        return f"I see! Let's keep practicing — {desc}. What would you like to say next?"
     return f"I see! Tell me more. {_scene_prompt(scene_data)}"
 
 
@@ -526,6 +745,9 @@ def _scene_prompt(scene_data: dict | None) -> str:
     """Get a contextual prompt based on the scene."""
     if not scene_data:
         return "What would you like to talk about?"
+    desc = scene_data.get("description", "")
+    if desc:
+        return f"Let's continue with: {desc}"
     opening = scene_data.get("opening_line", "")
     if opening:
         return opening
@@ -645,13 +867,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     "tts_voice": client_config.get("tts_voice", "en-US-female"),
                 }
 
-                active_connections[session.id] = {
-                    "websocket": websocket,
-                    "user_id": user_id,
-                    "interrupted_responses": set(),
-                    "tts_voice": negotiated["tts_voice"],
-                }
-
                 # Resolve the session's scene to get the opening line
                 session_scene = None
                 if session.scene_id:
@@ -667,11 +882,46 @@ async def websocket_endpoint(websocket: WebSocket):
                         session_scene.opening_line if session_scene
                         else "Hello! Let's practice English. What would you like to talk about?"
                     )
+                    # Store ALL custom scene data so LLM uses the AI-generated role & description
+                    custom_role = custom_scene.get("role_prompt", "")
+                    custom_desc = custom_scene.get("description", "")
+                    custom_scene_name = custom_scene.get("topic") or custom_scene.get("name") or ""
+                    custom_vocab = custom_scene.get("vocab_list", []) or custom_scene.get("vocabulary", []) or []
+                    custom_sentence_patterns = custom_scene.get("sentence_patterns", []) or custom_scene.get("patterns", []) or []
+                    custom_scene_id = custom_scene.get("custom_scene_id") or payload.get("custom_scene_id")
                 else:
                     opening_line = (
                         session_scene.opening_line if session_scene
                         else "Hello! Let's practice English. What would you like to talk about?"
                     )
+                    custom_role = ""
+                    custom_desc = ""
+                    custom_scene_name = ""
+                    custom_vocab = []
+                    custom_sentence_patterns = []
+                    custom_scene_id = None
+
+                active_connections[session.id] = {
+                    "websocket": websocket,
+                    "user_id": user_id,
+                    "interrupted_responses": set(),
+                    "tts_voice": negotiated["tts_voice"],
+                    "custom_role_prompt": custom_role,
+                    "custom_description": custom_desc,
+                    "custom_scene_name": custom_scene_name,
+                    "custom_vocab_list": custom_vocab,
+                    "custom_sentence_patterns": custom_sentence_patterns,
+                    "custom_scene_id": custom_scene_id,
+                    "scene_name": custom_scene_name or (session_scene.name if session_scene else ""),
+                }
+
+                # If custom_scene_id wasn't saved to the session during creation, update it now
+                if custom_scene_id and session and not session.custom_scene_id:
+                    try:
+                        session.custom_scene_id = uuid.UUID(str(custom_scene_id))
+                        await db.commit()
+                    except (ValueError, TypeError):
+                        pass
 
                 # Count existing utterances so sequence starts correctly
                 existing_seq_result = await db.execute(
@@ -851,6 +1101,119 @@ async def websocket_endpoint(websocket: WebSocket):
         await db.close()
 
 
+# ── System prompt builder ─────────────────────────────────────────────
+
+DIFFICULTY_INSTRUCTIONS: dict[str, str] = {
+    "beginner": (
+        "Use simple vocabulary (CEFR A1-A2 level). Keep sentences short (8-12 words). "
+        "Speak at a slow, clear pace. Be very patient and encouraging. "
+        "When the user makes a grammar error, gently include the corrected form in your response "
+        "without lengthy explanation. Ask simple follow-up questions to keep the conversation going."
+    ),
+    "intermediate": (
+        "Use everyday vocabulary with occasional B1-B2 level words. Use natural conversational pace. "
+        "Encourage longer responses with follow-up questions. "
+        "Gently correct major grammar or vocabulary errors by modeling the correct form in your reply. "
+        "Use a mix of short and medium-length sentences (10-20 words)."
+    ),
+    "advanced": (
+        "Use rich vocabulary including C1-C2 level expressions and idioms. "
+        "Use complex sentence structures where natural. Challenge the user with nuanced follow-up questions. "
+        "Only correct significant errors — allow minor mistakes to flow naturally. "
+        "Push for detailed, well-reasoned responses. Use authentic, native-like expressions."
+    ),
+}
+
+
+def _build_system_prompt(scene_data: dict | None, difficulty: str = "intermediate") -> str:
+    """Build a comprehensive system prompt that keeps the AI in character and on-topic.
+
+    Combines role definition, scene context, difficulty-appropriate behavior,
+    suggested vocabulary, sentence patterns, and strict scene-adherence rules.
+    """
+    if not scene_data:
+        return (
+            "You are a friendly English conversation partner. "
+            "Respond naturally in English. Keep your responses to 1-3 sentences. "
+            "Gently correct any English errors by modeling the correct form. "
+            "Ask follow-up questions to keep the conversation going."
+        )
+
+    parts: list[str] = []
+
+    # 1. Role definition (from AI-generated or built-in scene)
+    role_prompt = scene_data.get("role_prompt", "")
+    if role_prompt:
+        parts.append(role_prompt)
+    else:
+        parts.append("You are a friendly English conversation partner. Respond naturally in English.")
+
+    # 2. Scene context
+    scene_name = scene_data.get("scene_name", "")
+    description = scene_data.get("description", "")
+    if scene_name or description:
+        ctx_parts = []
+        if scene_name:
+            ctx_parts.append(f"Scene: {scene_name}")
+        if description:
+            ctx_parts.append(description)
+        parts.append(" — ".join(ctx_parts))
+
+    # 3. Difficulty-level behavioral instructions
+    difficulty = difficulty or "intermediate"
+    diff_instruction = DIFFICULTY_INSTRUCTIONS.get(
+        difficulty, DIFFICULTY_INSTRUCTIONS["intermediate"]
+    )
+    parts.append(f"Conversation level: {difficulty}. {diff_instruction}")
+
+    # 4. Vocabulary to naturally incorporate (when contextually relevant)
+    vocab_list = scene_data.get("vocab_list", [])
+    if vocab_list:
+        words = []
+        for v in vocab_list:
+            if isinstance(v, dict):
+                w = v.get("word", "") or v.get("pattern", "")
+            else:
+                w = str(v)
+            if w and len(w) > 1:
+                words.append(w)
+        if words:
+            parts.append(
+                f"Try to naturally use these vocabulary words when relevant to the conversation: "
+                f"{', '.join(words[:8])}. Do NOT force all of them — only use what fits the flow."
+            )
+
+    # 5. Sentence patterns to use as templates
+    patterns = scene_data.get("sentence_patterns", [])
+    if patterns:
+        pattern_texts = []
+        for p in patterns:
+            if isinstance(p, dict):
+                pt = p.get("pattern", "") or p.get("word", "")
+            else:
+                pt = str(p)
+            if pt and len(pt) > 3:
+                pattern_texts.append(pt)
+        if pattern_texts:
+            parts.append(
+                f"Reference sentence structures to use naturally: {'; '.join(pattern_texts[:5])}"
+            )
+
+    # 6. Scene adherence + error correction + response length
+    parts.append(
+        "CRITICAL RULES:\n"
+        "- Stay strictly in character for this scene at all times.\n"
+        "- If the user goes off-topic, politely steer the conversation back to the scene.\n"
+        "- Gently correct English grammar, vocabulary, or pronunciation errors "
+        "by naturally using the correct form in your response.\n"
+        "- Keep responses to 1-3 sentences. Do NOT write essays.\n"
+        "- Always end with a question or prompt to encourage the user to continue.\n"
+        "- Respond in English only."
+    )
+
+    return "\n\n".join(parts)
+
+
 async def _process_user_message(
     websocket: WebSocket,
     db: AsyncSession,
@@ -960,12 +1323,47 @@ async def _process_user_message(
             role = "assistant" if u.speaker == "ai" else "user"
             history.append({"role": role, "content": u.text})
 
-    # Try Groq LLM
-    system_prompt = scene_data.get("role_prompt", "") if scene_data else ""
-    from ..services.llm_service import generate_response
-    ai_text = await generate_response(asr_text, system_prompt, history)
+    # Build comprehensive system prompt from scene data
+    session_difficulty = session_obj.difficulty if session_obj else "intermediate"
+    system_prompt = _build_system_prompt(scene_data, difficulty=session_difficulty)
 
-    # Fall back to simulated response if Groq unavailable
+    # Scene context prefix for the user message (reinforces scene awareness)
+    scene_name = scene_data.get("scene_name", "") if scene_data else ""
+    scene_desc = scene_data.get("description", "") if scene_data else ""
+    context_prefix = ""
+    if scene_name or scene_desc:
+        ctx_parts = []
+        if scene_name:
+            ctx_parts.append(scene_name)
+        if scene_desc:
+            ctx_parts.append(scene_desc)
+        context_prefix = f"[Current scene: {' — '.join(ctx_parts)}]\n"
+
+    # Include difficulty hint in user message for additional reinforcement
+    diff_hint = f"[Difficulty: {session_difficulty}]\n" if session_difficulty else ""
+    contextualized_message = f"{context_prefix}{diff_hint}User says: \"{asr_text}\""
+
+    # Choose temperature based on difficulty: lower for beginners (more predictable),
+    # slightly higher for advanced (more creative/natural)
+    difficulty_temperature = {
+        "beginner": 0.6,
+        "intermediate": 0.7,
+        "advanced": 0.75,
+    }
+    llm_temperature = difficulty_temperature.get(session_difficulty, 0.7)
+
+    from ..services.llm_service import generate_response
+    ai_text = await generate_response(
+        contextualized_message,
+        system_prompt,
+        history,
+        temperature=llm_temperature,
+        max_tokens=300,
+    )
+    if not ai_text:
+        print(f"[WS] LLM returned None — falling back to simulated response. Provider: {settings.llm_provider}")
+
+    # Fall back to simulated response if LLM unavailable
     if not ai_text:
         ai_text = _simulate_llm_response(asr_text, scene_data)
 

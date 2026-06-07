@@ -2,6 +2,7 @@ import apiClient from './client';
 
 export interface SessionCreate {
   scene_id: number;
+  custom_scene_id?: string;
 }
 
 export interface SessionItem {

@@ -22,6 +22,12 @@
         </div>
       </div>
 
+      <!-- Custom scene description -->
+      <div v-if="(scene as any)._data?.description" class="desc-section">
+        <p class="desc-label">场景简介</p>
+        <p class="desc-text">{{ (scene as any)._data.description }}</p>
+      </div>
+
       <div class="intro-section">
         <p class="opening-line">"{{ scene.opening_line }}"</p>
         <p class="role-prompt">{{ scene.role_prompt }}</p>
@@ -221,12 +227,21 @@ async function startSession() {
   startError.value = '';
   starting.value = true;
   try {
-    const sceneId = (scene.value as any)._custom ? 1 : scene.value.scene_id;
-    const session = await sessionApi.create({ scene_id: sceneId });
+    const isCustom = !!(scene.value as any)._custom;
+    const sceneId = isCustom ? 1 : scene.value.scene_id;
+    const customData = isCustom ? (scene.value as any)._data : null;
+    const session = await sessionApi.create({
+      scene_id: sceneId,
+      custom_scene_id: customData?.custom_scene_id || undefined,
+    });
     chatStore.sceneId = session.scene_id;
-    // Pass custom scene data for WebSocket
-    if ((scene.value as any)._custom) {
-      sessionStorage.setItem('activeCustomScene', JSON.stringify((scene.value as any)._data));
+    // Pass custom scene data for WebSocket (include custom_scene_id from session response)
+    if (isCustom && customData) {
+      const wsData = {
+        ...customData,
+        custom_scene_id: customData.custom_scene_id || session.custom_scene_id,
+      };
+      sessionStorage.setItem('activeCustomScene', JSON.stringify(wsData));
     }
     router.push(`/chat/${session.session_id}`);
   } catch (e: any) {
@@ -297,6 +312,23 @@ onMounted(() => {
 .difficulty.beginner { color: var(--accent-success); }
 .difficulty.intermediate { color: var(--accent-warning); }
 .difficulty.advanced { color: var(--accent-danger); }
+
+.desc-section {
+  margin-bottom: 20px;
+  padding: 16px;
+  background: rgba(56,189,248,0.08);
+  border-radius: 8px;
+  border-left: 3px solid var(--accent-primary);
+}
+.desc-label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+.desc-text {
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
 
 .intro-section {
   margin-bottom: 20px;
