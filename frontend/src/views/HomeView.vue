@@ -139,6 +139,7 @@ const customError = ref('');
 const customSceneData = ref<any>(null);
 
 async function createCustomScene() {
+  if (!auth.isAuthenticated) { customError.value = '请先登录'; return; }
   customError.value = ''; customLoading.value = true;
   try {
     const res = await sceneApi.createCustom({
