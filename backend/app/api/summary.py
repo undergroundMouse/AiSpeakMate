@@ -217,7 +217,7 @@ async def get_session_summary(
             radar_interaction=radar.interaction,
             highlights=[h.model_dump() for h in highlights],
             practice_suggestions=[s.model_dump() for s in suggestions],
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.utcnow(),
         )
         db.add(summary)
         await db.commit()
