@@ -356,6 +356,12 @@ def _simulate_llm_response(
     if any(w in words for w in ("name", "who", "your")):
         return f"I'm {role}, here to help you practice English in this {scene_name}. But let's focus on you — tell me about yourself!"
 
+    # Scene drift check — run BEFORE topic keywords so off-topic gets caught
+    if scene_name:
+        drift_msg = _check_scene_drift(text, scene_name)
+        if drift_msg:
+            return drift_msg
+
     # Order/food related
     if any(w in words for w in ("want", "would like", "i'd like", "order", "have", "get", "buy")):
         item = _extract_keyword_after(text, ["want", "would like", "order", "have", "get", "buy", "i'd like"])
@@ -431,12 +437,6 @@ def _simulate_llm_response(
 
     if lower in ("no", "nope", "not really"):
         return f"I understand. Is there something else you'd prefer instead?"
-
-    # Scene drift check — before generic fallback
-    if scene_name:
-        drift_msg = _check_scene_drift(text, scene_name)
-        if drift_msg:
-            return f"{drift_msg}"
 
     # Generic: reference the user's topic
     if keywords:
