@@ -3,17 +3,17 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import (
-    BigInteger,
     Boolean,
     CheckConstraint,
     Float,
     ForeignKey,
     Integer,
+    JSON,
     SmallInteger,
     String,
     Text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -44,7 +44,7 @@ class PronunciationEvaluation(Base):
     completeness_score: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)
     prosody_score: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)
     advice: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    detail_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    detail_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     evaluated_at: Mapped[datetime] = mapped_column(default=lambda: datetime.utcnow())
 
     utterance: Mapped["Utterance"] = relationship(back_populates="pronunciation")
@@ -56,7 +56,7 @@ class PronunciationEvaluation(Base):
 class PhonemeScore(Base):
     __tablename__ = "phoneme_scores"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     evaluation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("pronunciation_evaluations.id", ondelete="CASCADE"),
@@ -79,7 +79,7 @@ class PhonemeScore(Base):
 class GrammarError(Base):
     __tablename__ = "grammar_errors"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     utterance_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("utterances.id", ondelete="CASCADE"),

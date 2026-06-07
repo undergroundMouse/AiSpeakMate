@@ -1,7 +1,7 @@
 from typing import Optional
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -31,10 +31,10 @@ class Scene(Base):
     role_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     opening_line: Mapped[str] = mapped_column(Text, nullable=False)
     difficulty_levels: Mapped[list] = mapped_column(
-        JSONB, nullable=False, default=lambda: ["beginner", "intermediate", "advanced"]
+        JSON, nullable=False, default=lambda: ["beginner", "intermediate", "advanced"]
     )
-    difficulty_settings: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    tags: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+    difficulty_settings: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     suggested_duration: Mapped[int] = mapped_column(Integer, default=300)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
@@ -47,7 +47,7 @@ class Scene(Base):
     )
 
     def get_difficulty_levels(self) -> list[str]:
-        """Return difficulty_levels as a list, handling both JSONB-decoded
+        """Return difficulty_levels as a list, handling both JSON-decoded
         lists and legacy double-encoded JSON strings."""
         if self.difficulty_levels is None:
             return []
@@ -56,7 +56,7 @@ class Scene(Base):
         return []
 
     def get_tags(self) -> list[str]:
-        """Return tags as a list, handling both JSONB-decoded
+        """Return tags as a list, handling both JSON-decoded
         lists and legacy double-encoded JSON strings."""
         if self.tags is None:
             return []

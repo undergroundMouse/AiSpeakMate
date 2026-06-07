@@ -128,10 +128,10 @@ async def end_session(
     if session.status != "active":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Session already ended")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
     session.status = "completed"
     session.ended_at = now
-    duration = int((now - session.started_at).total_seconds())
+    duration = int((now - session.started_at.replace(tzinfo=None)).total_seconds())
     session.duration_seconds = duration
     await db.commit()
 

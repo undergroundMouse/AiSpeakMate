@@ -241,8 +241,22 @@ export const useChatStore = defineStore('chat', () => {
       connectionStatus.value.error = 'Not connected to chat server';
       return;
     }
-    // Send audio as binary
-    ws.send(audioBlob);
+    // Convert audio to base64 and send as JSON metadata frame
+    // This avoids the binary/text mismatch with the backend
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(',')[1]; // strip data:... prefix
+      ws!.send(JSON.stringify({
+        type: 'audio_data',
+        payload: {
+          session_id: currentSessionId.value,
+          audio_base64: base64,
+          audio_mime: audioBlob.type || 'audio/webm',
+          is_end: true,
+        },
+      }));
+    };
+    reader.readAsDataURL(audioBlob);
   }
 
   function clearMessages() {

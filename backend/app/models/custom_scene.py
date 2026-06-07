@@ -2,8 +2,8 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, ForeignKey, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import Boolean, ForeignKey, JSON, String, Text
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
@@ -24,8 +24,8 @@ class CustomScene(Base):
     topic: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     role: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     difficulty: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    focus_grammar: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
-    focus_vocab: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+    focus_grammar: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    focus_vocab: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     prompt_snapshot: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_temporary: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
