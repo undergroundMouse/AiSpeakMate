@@ -297,9 +297,8 @@ def _check_scene_drift(text: str, scene_name: str) -> str | None:
 def _simulate_llm_response(
     text: str,
     scene_data: dict | None,
-    grammar_errors: list | None = None,
 ) -> str:
-    """Generate a contextual AI response based on user input, scene, and grammar feedback."""
+    """Generate a contextual AI response based on user input and scene context."""
     lower = text.strip().lower().rstrip(".!?")
 
     # Extract key words from user input for contextual response
@@ -336,17 +335,6 @@ def _simulate_llm_response(
             role = "the team lead"
             scene_name = "business meeting"
 
-    # Build grammar feedback section if errors were found
-    grammar_feedback = ""
-    if grammar_errors:
-        errors_text = []
-        for ge in grammar_errors[:2]:  # mention up to 2 errors
-            errors_text.append(f"'{ge.original_text}' should be '{ge.correction}'")
-        if errors_text:
-            grammar_feedback = (
-                f" By the way, {', and '.join(errors_text)}. "
-            )
-
     # --- Greetings ---
     if lower in ("hello", "hi", "hey", "hi there", "good morning", "good afternoon", "good evening"):
         return f"Hello! I'm {role}. How are you doing today?"
@@ -372,70 +360,70 @@ def _simulate_llm_response(
     if any(w in words for w in ("want", "would like", "i'd like", "order", "have", "get", "buy")):
         item = _extract_keyword_after(text, ["want", "would like", "order", "have", "get", "buy", "i'd like"])
         if item:
-            return f"{grammar_feedback}Great choice! One {item} coming right up. Can I get you anything else?"
-        return f"{grammar_feedback}Sure! What exactly would you like? Tell me more about what you're looking for."
+            return f"Great choice! One {item} coming right up. Can I get you anything else?"
+        return f"Sure! What exactly would you like? Tell me more about what you're looking for."
 
     # Food/drink specific
     if any(w in words for w in ("coffee", "tea", "latte", "espresso", "cappuccino", "drink", "water", "juice", "menu")):
         drink = next((w for w in ("coffee", "tea", "latte", "espresso", "cappuccino") if w in words), "that")
         size_q = "What size would you like — small, medium, or large?" if drink else ""
-        return f"{grammar_feedback}Ah, {drink}! Excellent choice. {size_q}"
+        return f"Ah, {drink}! Excellent choice. {size_q}"
 
     if any(w in words for w in ("food", "eat", "hungry", "meal", "lunch", "dinner", "breakfast", "appetizer", "steak", "chicken", "fish", "salad")):
         food = next((w for w in ("steak", "chicken", "fish", "salad", "meal") if w in words), "that dish")
-        return f"{grammar_feedback}{food.capitalize()} sounds perfect! How would you like it prepared?"
+        return f"{food.capitalize()} sounds perfect! How would you like it prepared?"
 
     # Shopping related
     if any(w in words for w in ("size", "medium", "large", "small", "fit", "try", "wear", "color", "price", "sale", "cheap", "expensive")):
-        return f"{grammar_feedback}Let me help you find the right size. What size do you normally wear?"
+        return f"Let me help you find the right size. What size do you normally wear?"
 
     # Travel/airport
     if any(w in words for w in ("flight", "fly", "airport", "boarding", "luggage", "baggage", "passport", "ticket", "seat")):
-        return f"{grammar_feedback}I'll help you with that. May I see your booking confirmation? Do you have any luggage to check in?"
+        return f"I'll help you with that. May I see your booking confirmation? Do you have any luggage to check in?"
 
     # Hotel
     if any(w in words for w in ("room", "hotel", "stay", "night", "reservation", "book", "check-in", "checkout")):
-        return f"{grammar_feedback}Let me check your reservation. How many nights will you be staying with us?"
+        return f"Let me check your reservation. How many nights will you be staying with us?"
 
     # Directions
     if any(w in words for w in ("where", "direction", "how do i get", "find", "lost", "way", "street", "road", "turn", "left", "right", "straight")):
-        return f"{grammar_feedback}Ah, let me help you find your way. Do you see that big building over there? Go straight for two blocks and turn left at the traffic light."
+        return f"Ah, let me help you find your way. Do you see that big building over there? Go straight for two blocks and turn left at the traffic light."
 
     # Interview
     if any(w in words for w in ("experience", "skill", "job", "work", "company", "resume", "cv", "strength", "weakness", "career", "salary")):
-        return f"{grammar_feedback}That's interesting! Tell me more about your experience. What would you say is your greatest strength?"
+        return f"That's interesting! Tell me more about your experience. What would you say is your greatest strength?"
 
     # Meeting
     if any(w in words for w in ("project", "deadline", "meeting", "report", "team", "plan", "update", "task", "timeline", "budget")):
-        return f"{grammar_feedback}Good point. Could you elaborate on that? I'd like to hear more details about the timeline."
+        return f"Good point. Could you elaborate on that? I'd like to hear more details about the timeline."
 
     # Recommendations / suggestions
     if any(w in words for w in ("recommend", "suggest", "suggestion", "popular", "best", "special")):
-        return f"{grammar_feedback}I'd recommend our house special. It's very popular! Would you like to try that?"
+        return f"I'd recommend our house special. It's very popular! Would you like to try that?"
 
     # Opinions / I think / I believe
     if any(phrase in lower for phrase in ("i think", "i believe", "in my opinion", "i feel", "i guess")):
-        return f"{grammar_feedback}Interesting perspective! Why do you feel that way? Tell me more."
+        return f"Interesting perspective! Why do you feel that way? Tell me more."
 
     # Likes / preferences
     if any(w in words for w in ("like", "love", "enjoy", "prefer", "favorite", "hate", "dislike")):
-        return f"{grammar_feedback}Oh really? That's fascinating! What do you like most about it?"
+        return f"Oh really? That's fascinating! What do you like most about it?"
 
     # Weather
     if any(w in words for w in ("weather", "rain", "sunny", "hot", "cold", "warm", "cloudy", "snow")):
-        return f"{grammar_feedback}Yes, the weather has been quite interesting lately! How does it affect your plans?"
+        return f"Yes, the weather has been quite interesting lately! How does it affect your plans?"
 
     # Time / schedule
     if any(w in words for w in ("time", "today", "tomorrow", "week", "month", "schedule", "plan", "busy", "free")):
-        return f"{grammar_feedback}I see. What time works best for you? Let's plan around your schedule."
+        return f"I see. What time works best for you? Let's plan around your schedule."
 
     # Background / about self
     if any(w in words for w in ("student", "teacher", "engineer", "doctor", "work", "study", "learn", "school", "university", "college")):
-        return f"{grammar_feedback}That's great! Tell me more about what you do. What's the most challenging part?"
+        return f"That's great! Tell me more about what you do. What's the most challenging part?"
 
     # Hobbies / free time
     if any(w in words for w in ("hobby", "hobbies", "free time", "weekend", "fun", "sport", "music", "movie", "book", "read", "game", "play")):
-        return f"{grammar_feedback}Sounds like fun! How often do you do that?"
+        return f"Sounds like fun! How often do you do that?"
 
     # Yes/No short answers
     if lower in ("yes", "yeah", "yep", "sure", "ok", "okay"):
@@ -448,15 +436,15 @@ def _simulate_llm_response(
     if scene_name:
         drift_msg = _check_scene_drift(text, scene_name)
         if drift_msg:
-            return f"{grammar_feedback}{drift_msg}"
+            return f"{drift_msg}"
 
     # Generic: reference the user's topic
     if keywords:
         topic = keywords[0] if len(keywords[0]) > 3 else (keywords[1] if len(keywords) > 1 else keywords[0])
-        return f"{grammar_feedback}That's interesting what you said about '{topic}'. Can you tell me more about that?"
+        return f"That's interesting what you said about '{topic}'. Can you tell me more about that?"
 
     # Fallback with scene context
-    return f"{grammar_feedback}I see! Tell me more. {_scene_prompt(scene_data)}"
+    return f"I see! Tell me more. {_scene_prompt(scene_data)}"
 
 
 def _scene_prompt(scene_data: dict | None) -> str:
@@ -825,7 +813,7 @@ async def _process_user_message(
     # generate LLM response with grammar feedback
     data = await _get_session_data(db, current_session_id)
     scene_data = data["scene_data"] if data else None
-    ai_text = _simulate_llm_response(asr_text, scene_data, grammar_errors)
+    ai_text = _simulate_llm_response(asr_text, scene_data)
 
     ai_utt = await _store_utterance(current_session_id, "ai", ai_text, sequence_counter + 2)
 
