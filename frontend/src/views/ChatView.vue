@@ -7,6 +7,14 @@
         <span class="dot"></span>
         {{ statusText }}
       </div>
+      <button
+        class="btn-tts"
+        :class="{ muted: !chatStore.ttsEnabled }"
+        :title="chatStore.ttsEnabled ? 'AI 语音播放中 — 点击静音' : 'AI 语音已静音 — 点击开启'"
+        @click="chatStore.toggleTts()"
+      >
+        {{ chatStore.ttsEnabled ? '🔊' : '🔇' }}
+      </button>
       <button v-if="chatStore.connectionStatus.connected" class="btn-end" @click="endSession">
         结束对话
       </button>
@@ -28,6 +36,22 @@
         <div class="bubble">
           <div class="role-label">{{ msg.role === 'user' ? '你' : 'AI' }}</div>
           <div class="content">{{ msg.content }}</div>
+
+          <!-- Translate button for AI messages -->
+          <button
+            v-if="msg.role === 'assistant' && !msg.isTemporary"
+            class="btn-translate"
+            :class="{ active: translations[msg.id] }"
+            :disabled="translatingId === msg.id"
+            @click="toggleTranslate(msg.id, msg.content)"
+            :title="translations[msg.id] ? '隐藏翻译' : '翻译成中文'"
+          >
+            {{ translatingId === msg.id ? '...' : (translations[msg.id] ? '隐藏' : '译') }}
+          </button>
+          <!-- Translation result -->
+          <div v-if="translations[msg.id]" class="translation">
+            {{ translations[msg.id] }}
+          </div>
 
           <!-- Corrections for user messages -->
           <div v-if="msg.role === 'user' && msg.corrections?.length" class="corrections">
@@ -114,6 +138,33 @@ const sceneStore = useSceneStore();
 const inputText = ref('');
 const messagesContainer = ref<HTMLElement | null>(null);
 
+// Translation state
+const translations = ref<Record<string, string>>({});
+const translatingId = ref<string | null>(null);
+import apiClient from '@/api/client';
+
+async function toggleTranslate(msgId: string, text: string) {
+  // If already translated, toggle off
+  if (translations.value[msgId]) {
+    delete translations.value[msgId];
+    return;
+  }
+  // Fetch translation
+  translatingId.value = msgId;
+  try {
+    const res = await apiClient.post('/translate', {
+      text,
+      source_lang: 'en',
+      target_lang: 'zh-CN',
+    });
+    translations.value[msgId] = res.data.translated;
+  } catch {
+    translations.value[msgId] = '[翻译失败]';
+  } finally {
+    translatingId.value = null;
+  }
+}
+
 const statusClass = computed(() => {
   const s = chatStore.connectionStatus;
   if (s.connected) return 'connected';
@@ -150,11 +201,15 @@ function sendText() {
   inputText.value = '';
 }
 
-// --- Audio recording ---
+// --- Speech Recognition (browser built-in) ---
 const isRecording = ref(false);
 const recordingDuration = ref(0);
-let mediaRecorder: MediaRecorder | null = null;
+let recognition: any = null;
 let recordingTimer: ReturnType<typeof setInterval> | null = null;
+
+// Check for browser SpeechRecognition support
+const SpeechRecognitionAPI =
+  (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
 async function toggleRecording() {
   if (isRecording.value) {
@@ -165,50 +220,99 @@ async function toggleRecording() {
 }
 
 async function startRecording() {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-    const chunks: BlobPart[] = [];
+  if (SpeechRecognitionAPI) {
+    // Use browser's built-in speech recognition for accurate ASR
+    try {
+      recognition = new SpeechRecognitionAPI();
+      recognition.lang = 'en-US';
+      recognition.interimResults = false;
+      recognition.continuous = false;
+      recognition.maxAlternatives = 1;
 
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunks.push(e.data);
-    };
+      recognition.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        if (transcript) {
+          // sendMessage pushes the user bubble AND sends to server
+          chatStore.sendMessage(transcript);
+        }
+        resetRecordingState();
+      };
 
-    mediaRecorder.onstop = () => {
-      // Stop all tracks to release microphone
-      stream.getTracks().forEach((t) => t.stop());
-      // Send recorded audio via WebSocket
-      if (chunks.length > 0) {
-        const audioBlob = new Blob(chunks, { type: 'audio/webm' });
-        chatStore.sendAudio(audioBlob);
-      }
-      // Reset recording state
-      isRecording.value = false;
-      chatStore.isRecording = false;
+      recognition.onerror = (event: any) => {
+        console.error('Speech recognition error:', event.error);
+        resetRecordingState();
+      };
+
+      recognition.onend = () => {
+        // onend fires after onresult/onerror — ensure cleanup only if still recording
+        if (isRecording.value) {
+          resetRecordingState();
+        }
+      };
+
+      recognition.start();
+      isRecording.value = true;
+
       recordingDuration.value = 0;
-      if (recordingTimer) {
-        clearInterval(recordingTimer);
-        recordingTimer = null;
-      }
-    };
+      recordingTimer = setInterval(() => {
+        recordingDuration.value++;
+      }, 1000);
+    } catch (err) {
+      console.error('Speech recognition start failed:', err);
+      isRecording.value = false;
+    }
+  } else {
+    // Fallback for browsers without SpeechRecognition: use audio recording
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      const chunks: BlobPart[] = [];
 
-    mediaRecorder.start(250); // Collect data every 250ms
-    isRecording.value = true;
-    chatStore.isRecording = true;
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
 
-    // Start duration timer
-    recordingDuration.value = 0;
-    recordingTimer = setInterval(() => {
-      recordingDuration.value++;
-    }, 1000);
-  } catch (err) {
-    console.error('Failed to start recording:', err);
+      mediaRecorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        if (chunks.length > 0) {
+          chatStore.sendAudio(new Blob(chunks, { type: 'audio/webm' }));
+        }
+        resetRecordingState();
+      };
+
+      mediaRecorder.start(250);
+      isRecording.value = true;
+
+      recordingDuration.value = 0;
+      recordingTimer = setInterval(() => {
+        recordingDuration.value++;
+      }, 1000);
+
+      // Store for stopRecording
+      (window as any).__fallbackRecorder = mediaRecorder;
+    } catch (err) {
+      console.error('Failed to start recording:', err);
+    }
+  }
+}
+
+function resetRecordingState() {
+  isRecording.value = false;
+  recordingDuration.value = 0;
+  if (recordingTimer) {
+    clearInterval(recordingTimer);
+    recordingTimer = null;
   }
 }
 
 function stopRecording() {
-  if (mediaRecorder && mediaRecorder.state === 'recording') {
-    mediaRecorder.stop();
+  if (recognition) {
+    recognition.stop();
+    recognition = null;
+  } else if ((window as any).__fallbackRecorder) {
+    const mr = (window as any).__fallbackRecorder;
+    if (mr.state === 'recording') mr.stop();
+    (window as any).__fallbackRecorder = null;
   }
 }
 
@@ -232,10 +336,8 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
-  // Stop recording if active when leaving
-  if (mediaRecorder && mediaRecorder.state === 'recording') {
-    mediaRecorder.stop();
-  }
+  // Stop speech recognition or recording if active
+  stopRecording();
   // Don't disconnect on unmount if user is navigating to summary
   // chatStore.disconnect();
 });
@@ -288,6 +390,24 @@ onUnmounted(() => {
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
+}
+
+.btn-tts {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--bg-card);
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  margin-left: auto;
+}
+.btn-tts:hover { background: var(--accent-primary); }
+.btn-tts.muted {
+  opacity: 0.5;
+  background: var(--bg-secondary);
 }
 
 .btn-end {
@@ -353,6 +473,40 @@ onUnmounted(() => {
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* Translate button */
+.btn-translate {
+  margin-top: 6px;
+  padding: 2px 10px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.1);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-translate:hover:not(:disabled) {
+  background: var(--accent-primary);
+  color: #0f172a;
+}
+.btn-translate.active {
+  background: rgba(56,189,248,0.2);
+  color: var(--accent-primary);
+}
+.btn-translate:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.translation {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(56,189,248,0.08);
+  border-left: 2px solid var(--accent-primary);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
 }
 
 /* Corrections */
