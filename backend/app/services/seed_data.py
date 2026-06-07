@@ -1,4 +1,4 @@
-"""Seed data for initial app setup - English learning scenes."""
+"""Seed data for initial app setup — bilingual EN/ZH scenes."""
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,13 +7,13 @@ from ..models.scene import Scene, SceneCategory, SceneSentencePattern, SceneVoca
 
 SEED_CATEGORIES = [
     {
-        "name": "Daily Life",
+        "name": "Daily Life / 日常生活",
         "icon_url": "/icons/daily-life.svg",
         "sort_order": 1,
         "scenes": [
             {
-                "name": "Ordering Coffee",
-                "description": "Practice ordering drinks and snacks at a café",
+                "name": "Ordering Coffee / 咖啡点单",
+                "description": "Practice ordering drinks and snacks at a café / 练习在咖啡店点饮品和小食",
                 "thumbnail_url": "/images/scenes/coffee.jpg",
                 "role_prompt": "You are a friendly barista at a busy coffee shop. Help the customer order their drink, ask about size and customizations, and make small talk about the weather.",
                 "opening_line": "Good morning! Welcome to Brew & Bean. What can I get for you today?",
@@ -33,8 +33,8 @@ SEED_CATEGORIES = [
                 ],
             },
             {
-                "name": "At the Restaurant",
-                "description": "Learn how to order food, ask about the menu, and interact with waitstaff",
+                "name": "At the Restaurant / 餐厅用餐",
+                "description": "Learn how to order food, ask about the menu, and interact with waitstaff / 学习点餐、询问菜单和服务员交流",
                 "thumbnail_url": "/images/scenes/restaurant.jpg",
                 "role_prompt": "You are a professional waiter at an upscale restaurant. Help the customer with menu recommendations, take their order, and check on their satisfaction.",
                 "opening_line": "Good evening! Welcome to The Garden Bistro. Do you have a reservation?",
@@ -54,8 +54,8 @@ SEED_CATEGORIES = [
                 ],
             },
             {
-                "name": "Shopping for Clothes",
-                "description": "Practice asking about sizes, colors, prices, and trying on clothes",
+                "name": "Shopping for Clothes / 服装购物",
+                "description": "Practice asking about sizes, colors, prices, and trying on clothes / 练习询问尺码、颜色、价格和试穿",
                 "thumbnail_url": "/images/scenes/shopping.jpg",
                 "role_prompt": "You are a helpful sales assistant in a clothing store. Help the customer find the right size, suggest styles, and handle returns or exchanges.",
                 "opening_line": "Hi there! Can I help you find anything in particular today? We have a sale on summer items!",
@@ -77,13 +77,13 @@ SEED_CATEGORIES = [
         ],
     },
     {
-        "name": "Travel & Transport",
+        "name": "Travel & Transport / 旅行出行",
         "icon_url": "/icons/travel.svg",
         "sort_order": 2,
         "scenes": [
             {
-                "name": "Airport Check-in",
-                "description": "Practice checking in for a flight, dealing with luggage, and boarding",
+                "name": "Airport Check-in / 机场值机",
+                "description": "Practice checking in for a flight, dealing with luggage, and boarding / 练习办理登机、托运行李和登机流程",
                 "thumbnail_url": "/images/scenes/airport.jpg",
                 "role_prompt": "You are an airline check-in agent at the airport. Help the passenger check in, weigh their luggage, assign seats, and provide boarding information.",
                 "opening_line": "Good afternoon! Welcome to SkyLine Airways. May I see your passport and booking confirmation, please?",
@@ -103,8 +103,8 @@ SEED_CATEGORIES = [
                 ],
             },
             {
-                "name": "Hotel Check-in",
-                "description": "Practice booking a room, checking in, and requesting hotel services",
+                "name": "Hotel Check-in / 酒店入住",
+                "description": "Practice booking a room, checking in, and requesting hotel services / 练习预订房间、办理入住和请求酒店服务",
                 "thumbnail_url": "/images/scenes/hotel.jpg",
                 "role_prompt": "You are a receptionist at a hotel. Welcome the guest, confirm their reservation, explain hotel amenities, and handle any special requests.",
                 "opening_line": "Good evening! Welcome to Grand Horizon Hotel. Do you have a reservation with us tonight?",
@@ -124,8 +124,8 @@ SEED_CATEGORIES = [
                 ],
             },
             {
-                "name": "Asking for Directions",
-                "description": "Practice asking for and giving directions on the street",
+                "name": "Asking for Directions / 问路指路",
+                "description": "Practice asking for and giving directions on the street / 练习在街上问路和指路",
                 "thumbnail_url": "/images/scenes/directions.jpg",
                 "role_prompt": "You are a friendly local on the street. Help the tourist find their way, give clear directions with landmarks, and suggest nearby attractions.",
                 "opening_line": "Hi! You look a bit lost. Can I help you find something?",
@@ -147,13 +147,13 @@ SEED_CATEGORIES = [
         ],
     },
     {
-        "name": "Business & Work",
+        "name": "Business & Work / 职场商务",
         "icon_url": "/icons/business.svg",
         "sort_order": 3,
         "scenes": [
             {
-                "name": "Job Interview",
-                "description": "Practice answering common interview questions and introducing yourself professionally",
+                "name": "Job Interview / 求职面试",
+                "description": "Practice answering common interview questions and introducing yourself professionally / 练习回答常见面试问题和专业自我介绍",
                 "thumbnail_url": "/images/scenes/interview.jpg",
                 "role_prompt": "You are an HR manager conducting a job interview for a software engineer position. Ask about the candidate's experience, strengths, weaknesses, and career goals. Maintain a professional but friendly tone.",
                 "opening_line": "Good morning! Thank you for coming in today. Why don't we start with you telling me a bit about yourself?",
@@ -173,8 +173,8 @@ SEED_CATEGORIES = [
                 ],
             },
             {
-                "name": "Business Meeting",
-                "description": "Practice participating in meetings, presenting ideas, and negotiating",
+                "name": "Business Meeting / 商务会议",
+                "description": "Practice participating in meetings, presenting ideas, and negotiating / 练习参与会议、表达观点和商务谈判",
                 "thumbnail_url": "/images/scenes/meeting.jpg",
                 "role_prompt": "You are the team lead running a project meeting. Discuss project progress, gather updates, and make decisions with the team member. Keep the discussion focused and productive.",
                 "opening_line": "Alright everyone, let's get started with our weekly project review. Could you begin by giving us an update on your tasks?",
