@@ -282,5 +282,8 @@ async function goToRandomScene() {
   finally { randomLoading.value = false; }
 }
 
-onMounted(() => { loadScenes(); });
+onMounted(() => {
+  loadScenes();
+  customScenes.value = loadCustomScenes();
+});
 </script>
