@@ -51,7 +51,7 @@
       <div v-if="customScenes.length > 0" style="margin-bottom:8px">
         <h2 class="section-title">自定义场景</h2>
         <div class="scene-grid">
-          <div v-for="scene in customScenes" :key="scene.scene_id" class="scene-card" @click="startCustomFromList(scene)">
+          <div v-for="scene in customScenes" :key="scene.scene_id" class="scene-card" @click="viewCustomScene(scene)">
             <div class="card-header">
               <span class="card-icon">✨</span>
               <h3>{{ scene.name }}</h3>
@@ -200,6 +200,11 @@ async function createCustomScene() {
   } finally { customLoading.value = false; }
 }
 
+function viewCustomScene(scene: any) {
+  if (!auth.isAuthenticated) return;
+  sessionStorage.setItem('customSceneDetail', JSON.stringify(scene._data));
+  router.push(`/scenes/custom_detail`);
+}
 async function startCustomFromList(scene: any) {
   if (!auth.isAuthenticated) return;
   customSceneData.value = scene._data;

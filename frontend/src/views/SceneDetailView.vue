@@ -177,13 +177,40 @@ const difficultyClass = computed(() => difficultyLevel.value || '');
 
 async function loadDetail() {
   errorMsg.value = '';
-  const id = Number(route.params.id);
-  if (isNaN(id)) {
+  const id = route.params.id;
+
+  // Check for custom scene from sessionStorage
+  if (id === 'custom_detail') {
+    const stored = sessionStorage.getItem('customSceneDetail');
+    if (stored) {
+      try {
+        const data = JSON.parse(stored);
+        sceneStore.currentScene = {
+          scene_id: 0,
+          name: data.topic || '自定义场景',
+          role_prompt: data.role_prompt || '',
+          opening_line: data.opening_line || '',
+          vocab_list: data.vocab_list || [],
+          sentence_patterns: data.sentence_patterns || [],
+          difficulty_settings: null,
+          suggested_duration_minutes: 5,
+          _custom: true,
+          _data: data,
+        };
+        return;
+      } catch {}
+    }
+    errorMsg.value = '场景数据无效';
+    return;
+  }
+
+  const numId = Number(id);
+  if (isNaN(numId)) {
     errorMsg.value = '无效的场景 ID';
     return;
   }
   try {
-    await sceneStore.fetchSceneDetail(id);
+    await sceneStore.fetchSceneDetail(numId);
   } catch (e: any) {
     errorMsg.value = '加载场景详情失败';
   }
@@ -194,8 +221,13 @@ async function startSession() {
   startError.value = '';
   starting.value = true;
   try {
-    const session = await sessionApi.create({ scene_id: scene.value.scene_id });
+    const sceneId = (scene.value as any)._custom ? 1 : scene.value.scene_id;
+    const session = await sessionApi.create({ scene_id: sceneId });
     chatStore.sceneId = session.scene_id;
+    // Pass custom scene data for WebSocket
+    if ((scene.value as any)._custom) {
+      sessionStorage.setItem('activeCustomScene', JSON.stringify((scene.value as any)._data));
+    }
     router.push(`/chat/${session.session_id}`);
   } catch (e: any) {
     startError.value = e?.response?.data?.detail || '创建会话失败，请稍后重试';

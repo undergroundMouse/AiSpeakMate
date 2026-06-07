@@ -14,6 +14,11 @@ const router = createRouter({
       component: () => import('@/views/SceneDetailView.vue'),
     },
     {
+      path: '/scenes/custom_detail',
+      name: 'custom-scene-detail',
+      component: () => import('@/views/SceneDetailView.vue'),
+    },
+    {
       path: '/chat/:sessionId',
       name: 'chat',
       component: () => import('@/views/ChatView.vue'),
