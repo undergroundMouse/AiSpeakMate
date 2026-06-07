@@ -32,9 +32,21 @@
         <h3>核心词汇</h3>
         <ul class="vocab-list">
           <li v-for="(v, idx) in scene.vocab_list" :key="idx" class="vocab-item">
-            <span class="vocab-word">{{ v.word }}</span>
-            <span v-if="v.phonetic" class="vocab-phonetic">{{ v.phonetic }}</span>
-            <span v-if="v.translation" class="vocab-translation">{{ v.translation }}</span>
+            <div class="vocab-main">
+              <span class="vocab-word">{{ v.word }}</span>
+              <span v-if="v.phonetic" class="vocab-phonetic">{{ v.phonetic }}</span>
+              <span v-if="v.translation" class="vocab-translation">{{ v.translation }}</span>
+            </div>
+            <button
+              v-if="v.audio_url"
+              class="btn-audio"
+              :class="{ playing: playingIdx === idx }"
+              :disabled="playingIdx === idx"
+              @click="playAudio(v.audio_url!, idx)"
+              :title="playingIdx === idx ? '播放中...' : '播放发音'"
+            >
+              {{ playingIdx === idx ? '⏸' : '🔊' }}
+            </button>
           </li>
         </ul>
       </div>
@@ -74,7 +86,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useSceneStore } from '@/stores/scene';
 import { useAuthStore } from '@/stores/auth';
@@ -96,6 +108,43 @@ const chatStore = useChatStore();
 const errorMsg = ref('');
 const starting = ref(false);
 const startError = ref('');
+
+// Audio playback state
+const audio = ref<HTMLAudioElement | null>(null);
+const playingIdx = ref<number | null>(null);
+
+function playAudio(url: string, idx: number) {
+  if (audio.value) {
+    audio.value.pause();
+    audio.value = null;
+  }
+  if (playingIdx.value === idx) {
+    playingIdx.value = null;
+    return;
+  }
+  const el = new Audio(url);
+  el.onended = () => {
+    playingIdx.value = null;
+    audio.value = null;
+  };
+  el.onerror = () => {
+    playingIdx.value = null;
+    audio.value = null;
+  };
+  el.play().catch(() => {
+    playingIdx.value = null;
+    audio.value = null;
+  });
+  audio.value = el;
+  playingIdx.value = idx;
+}
+
+onUnmounted(() => {
+  if (audio.value) {
+    audio.value.pause();
+    audio.value = null;
+  }
+});
 
 const scene = computed(() => sceneStore.currentScene);
 
@@ -253,14 +302,45 @@ onMounted(() => {
 }
 .vocab-item {
   display: flex;
-  align-items: baseline;
-  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
   padding: 6px 0;
   border-bottom: 1px solid var(--border-color, #334155);
   font-size: 0.9rem;
 }
 .vocab-item:last-child {
   border-bottom: none;
+}
+.vocab-main {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex: 1;
+}
+.btn-audio {
+  background: none;
+  border: 1px solid var(--border-color, #334155);
+  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  font-size: 1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+  color: var(--text-primary);
+}
+.btn-audio:hover:not(:disabled) {
+  background: var(--bg-card);
+}
+.btn-audio.playing {
+  background: var(--accent-primary);
+  color: #0f172a;
+  border-color: var(--accent-primary);
+}
+.btn-audio:disabled {
+  cursor: default;
 }
 .vocab-word {
   font-weight: 600;
