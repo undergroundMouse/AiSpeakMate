@@ -254,6 +254,46 @@ async def _get_session_data(db: AsyncSession, session_id: uuid.UUID):
     }
 
 
+SCENE_KEYWORDS = {
+    "coffee shop": {"coffee", "tea", "latte", "espresso", "cappuccino", "drink", "cup", "order", "size", "milk", "sugar", "menu", "takeaway", "hot", "cold", "cream", "sweet", "barista", "cafe"},
+    "restaurant": {"food", "menu", "order", "steak", "chicken", "fish", "salad", "appetizer", "dessert", "wine", "drink", "reservation", "table", "bill", "check", "waiter", "meal", "dinner", "lunch", "course", "chef", "delicious", "taste", "cook", "restaurant"},
+    "clothing store": {"size", "fit", "color", "wear", "clothes", "shirt", "pants", "dress", "price", "sale", "return", "exchange", "shop", "buy", "try", "fashion", "style", "shoes", "jacket", "store"},
+    "airport": {"flight", "boarding", "luggage", "baggage", "passport", "ticket", "seat", "gate", "check-in", "departure", "arrival", "airport", "fly", "plane", "travel", "carry-on", "delay", "airline"},
+    "hotel": {"room", "reservation", "check-in", "checkout", "night", "stay", "bed", "service", "amenities", "key", "floor", "hotel", "lobby", "breakfast", "wifi", "pool", "gym", "reception", "suite"},
+    "street": {"where", "street", "turn", "left", "right", "straight", "block", "landmark", "direction", "find", "lost", "way", "map", "near", "far", "distance", "walk", "drive", "corner", "traffic"},
+    "job interview": {"experience", "skill", "job", "work", "strength", "weakness", "career", "company", "team", "project", "resume", "interview", "position", "role", "salary", "hire", "manager", "goal", "qualification", "background"},
+    "business meeting": {"project", "deadline", "meeting", "report", "team", "plan", "update", "task", "timeline", "budget", "agenda", "milestone", "stakeholder", "presentation", "discuss", "proposal", "review", "objective", "schedule", "action"},
+}
+
+
+def _check_scene_drift(text: str, scene_name: str) -> str | None:
+    """Check if user input drifts off-topic for the scene. Returns reminder or None."""
+    keywords = SCENE_KEYWORDS.get(scene_name, set())
+    if not keywords:
+        return None
+
+    words = set(text.lower().split())
+    # Also check longer phrases
+    text_lower = text.lower()
+    match_count = sum(1 for kw in keywords if kw in text_lower)
+
+    if match_count == 0:
+        # Only warn for substantive messages (5+ words)
+        if len(words) >= 5:
+            reminders = {
+                "coffee shop": "Let's stay focused on ordering at the café. What drink would you like?",
+                "restaurant": "Let's keep our conversation about dining. What would you like to order?",
+                "clothing store": "Let's get back to shopping. What are you looking for today?",
+                "airport": "Let's focus on your flight. Do you have your travel documents ready?",
+                "hotel": "Let's talk about your hotel stay. How can I assist with your reservation?",
+                "street": "Let's get back to finding your way. Where are you trying to go?",
+                "job interview": "Let's return to the interview. Can you tell me about your work experience?",
+                "business meeting": "Let's get back to our meeting agenda. Any updates on your tasks?",
+            }
+            return reminders.get(scene_name, "Let's stay focused on our conversation topic. Can we get back to it?")
+    return None
+
+
 def _simulate_llm_response(
     text: str,
     scene_data: dict | None,
@@ -403,6 +443,12 @@ def _simulate_llm_response(
 
     if lower in ("no", "nope", "not really"):
         return f"I understand. Is there something else you'd prefer instead?"
+
+    # Scene drift check — before generic fallback
+    if scene_name:
+        drift_msg = _check_scene_drift(text, scene_name)
+        if drift_msg:
+            return f"{grammar_feedback}{drift_msg}"
 
     # Generic: reference the user's topic
     if keywords:

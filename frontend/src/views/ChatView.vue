@@ -127,7 +127,7 @@
     <!-- Recording indicator overlay -->
     <div v-if="isRecording" class="recording-overlay">
       <div class="recording-pulse"></div>
-      <span class="recording-text">正在录音... 点击停止按钮结束</span>
+      <span class="recording-text">正在持续录音... 再次点击停止并发送</span>
       <span class="recording-duration">{{ recordingDuration }}s</span>
     </div>
   </div>
@@ -252,46 +252,60 @@ async function startRecording() {
     console.error('Audio capture failed:', err);
   }
 
+  // Accumulated transcripts for continuous mode
+  const continuousTranscripts: string[] = [];
+
   if (SpeechRecognitionAPI) {
     try {
       recognition = new SpeechRecognitionAPI();
       recognition.lang = 'en-US';
-      recognition.interimResults = false;
-      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.continuous = true;
       recognition.maxAlternatives = 1;
 
       recognition.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript;
-        if (transcript) {
-          // Stop audio recorder to get the blob
-          stopAudioRecorder();
-          const audioBlob = audioChunks.length > 0
-            ? new Blob(audioChunks, { type: 'audio/webm' })
-            : null;
-          if (audioBlob) {
-            chatStore.sendMessageWithAudio(transcript, audioBlob);
-          } else {
-            chatStore.sendMessage(transcript);
+        // Collect all results since last start
+        let transcript = '';
+        for (let i = 0; i < event.results.length; i++) {
+          if (event.results[i].isFinal) {
+            transcript += event.results[i][0].transcript + ' ';
           }
         }
-        resetRecordingState();
+        if (transcript.trim()) {
+          continuousTranscripts.push(transcript.trim());
+        }
       };
 
       recognition.onerror = (event: any) => {
         console.error('Speech recognition error:', event.error);
-        stopAudioRecorder();
-        resetRecordingState();
       };
 
       recognition.onend = () => {
-        if (isRecording.value) {
+        // In continuous mode, onend fires after each utterance and auto-restarts.
+        // Only send text when user manually stopped (isRecording already set to false).
+        if (!isRecording.value) {
+          const fullText = continuousTranscripts.join(' ').trim();
+          if (fullText) {
+            stopAudioRecorder();
+            const audioBlob = audioChunks.length > 0
+              ? new Blob(audioChunks, { type: 'audio/webm' })
+              : null;
+            if (audioBlob) {
+              chatStore.sendMessageWithAudio(fullText, audioBlob);
+            } else {
+              chatStore.sendMessage(fullText);
+            }
+          }
+          continuousTranscripts.length = 0;
           stopAudioRecorder();
           resetRecordingState();
         }
+        // If isRecording is still true, recognition will auto-restart
       };
 
       recognition.start();
       isRecording.value = true;
+      continuousTranscripts.length = 0;
       recordingDuration.value = 0;
       recordingTimer = setInterval(() => { recordingDuration.value++; }, 1000);
     } catch (err) {
@@ -327,6 +341,9 @@ function resetRecordingState() {
 }
 
 function stopRecording() {
+  // Set recording flag false BEFORE stopping recognition
+  // so onend handler knows this is a manual stop (not auto-restart)
+  isRecording.value = false;
   if (recognition) {
     recognition.stop();
     recognition = null;
@@ -340,9 +357,8 @@ function stopRecording() {
       }
       resetRecordingState();
     };
+    stopAudioRecorder();
   }
-  stopAudioRecorder();
-  resetRecordingState();
 }
 
 async function endSession() {
