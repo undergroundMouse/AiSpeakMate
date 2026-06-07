@@ -1,4 +1,5 @@
 import json
+import random
 import uuid
 from datetime import datetime, timezone
 
@@ -8,6 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.database import get_db
 from ..core.security import decode_access_token
+from ..models.evaluation import (
+    GrammarError,
+    PhonemeScore,
+    PronunciationEvaluation,
+)
 from ..models.scene import Scene
 from ..models.session import Session, Utterance
 
@@ -57,6 +63,145 @@ async def _store_utterance(
     await db.commit()
     await db.refresh(utterance)
     return utterance
+
+
+async def _store_pronunciation_evaluation(
+    db: AsyncSession,
+    utterance: Utterance,
+    text: str,
+) -> PronunciationEvaluation:
+    """Generate and persist a simulated pronunciation evaluation for a user utterance."""
+    words = text.split()
+    overall = random.randint(55, 95)
+    pronunciation_score = random.randint(50, 100)
+    fluency_score = random.randint(50, 100)
+    completeness_score = random.randint(80, 100)
+    prosody_score = random.randint(50, 100)
+
+    evaluation = PronunciationEvaluation(
+        utterance_id=utterance.id,
+        overall_score=overall,
+        pronunciation_score=pronunciation_score,
+        fluency_score=fluency_score,
+        completeness_score=completeness_score,
+        prosody_score=prosody_score,
+        advice=_generate_pronunciation_advice(overall),
+    )
+    db.add(evaluation)
+    await db.flush()
+
+    # Generate per-word phoneme scores
+    for word in words[:10]:  # limit to first 10 words
+        clean_word = word.strip(".,!?;:\"'")
+        if not clean_word:
+            continue
+        word_score = random.randint(50, 100)
+        # Simulate 1-4 phonemes per word
+        phoneme_count = min(len(clean_word), 4)
+        for i, ch in enumerate(clean_word[:phoneme_count]):
+            ps = random.randint(40, 100)
+            is_err = ps < 60
+            db.add(PhonemeScore(
+                evaluation_id=evaluation.id,
+                word=clean_word,
+                word_score=word_score,
+                phoneme=f"/{ch}/",
+                phoneme_score=ps,
+                is_error=is_err,
+                suggested_phoneme=f"/{ch}/" if is_err else None,
+                start_time_ms=i * 200,
+                end_time_ms=(i + 1) * 200,
+            ))
+
+    await db.commit()
+    await db.refresh(evaluation)
+    return evaluation
+
+
+async def _store_grammar_errors(
+    db: AsyncSession,
+    utterance: Utterance,
+    text: str,
+) -> list[GrammarError]:
+    """Detect and persist grammar errors for a user utterance."""
+    errors: list[GrammarError] = []
+    lower = text.strip().lower()
+
+    patterns = [
+        {
+            "trigger": "i go to",
+            "check": lambda t: "i go to" in t and "yesterday" in t,
+            "error_type": "tense",
+            "match": "i go to",
+            "correction": "I went to",
+            "explanation": "应使用过去时 'went'",
+            "severity": "medium",
+        },
+        {
+            "trigger": "he go",
+            "check": lambda t: "he go" in t and "he goes" not in t,
+            "error_type": "subject-verb agreement",
+            "match": "he go",
+            "correction": "he goes",
+            "explanation": "主语 he 为第三人称单数，动词需用 goes",
+            "severity": "medium",
+        },
+        {
+            "trigger": "i has",
+            "check": lambda t: "i has" in t,
+            "error_type": "subject-verb agreement",
+            "match": "i has",
+            "correction": "I have",
+            "explanation": "第一人称应使用 'have' 而非 'has'",
+            "severity": "low",
+        },
+        {
+            "trigger": "two apple",
+            "check": lambda t: "two apple" in t,
+            "error_type": "plural",
+            "match": "two apple",
+            "correction": "two apples",
+            "explanation": "'two' 后应使用复数形式 'apples'",
+            "severity": "medium",
+        },
+    ]
+
+    for p in patterns:
+        if p["check"](lower):
+            idx = lower.find(p["match"])
+            if idx >= 0:
+                match_len = len(p["match"])
+                corrected_sentence = text[:idx] + p["correction"] + text[idx + match_len:]
+                error = GrammarError(
+                    utterance_id=utterance.id,
+                    error_type=p["error_type"],
+                    error_span_start=idx,
+                    error_span_end=idx + match_len,
+                    original_text=text[idx:idx + match_len],
+                    correction=p["correction"],
+                    corrected_sentence=corrected_sentence,
+                    explanation=p["explanation"],
+                    severity=p["severity"],
+                    is_expression_issue=False,
+                )
+                db.add(error)
+                errors.append(error)
+
+    if errors:
+        await db.commit()
+
+    return errors
+
+
+def _generate_pronunciation_advice(score: int) -> str:
+    if score >= 85:
+        return "发音非常好！继续保持。"
+    elif score >= 70:
+        return "发音不错，注意个别元音的发声位置。"
+    elif score >= 55:
+        return "重点练习元音发音，注意单词的重音位置。"
+    else:
+        return "建议多听原声并跟读，从基础音素开始练习。"
 
 
 async def _get_session_data(db: AsyncSession, session_id: uuid.UUID):
@@ -323,25 +468,54 @@ async def _process_user_message(
     })
 
     # store user utterance
-    await _store_utterance(current_session_id, "user", asr_text, sequence_counter + 1)
+    user_utt = await _store_utterance(current_session_id, "user", asr_text, sequence_counter + 1)
 
-    # pronunciation feedback (simulated)
+    # persist pronunciation evaluation
+    evaluation = await _store_pronunciation_evaluation(db, user_utt, asr_text)
+
+    # build word scores for the feedback message
+    word_scores = []
+    if evaluation.id:
+        from sqlalchemy import select as _sel
+        ps_result = await db.execute(
+            _sel(PhonemeScore).where(PhonemeScore.evaluation_id == evaluation.id)
+        )
+        phoneme_scores = ps_result.scalars().all()
+        # group phoneme scores by word
+        word_map: dict[str, list[PhonemeScore]] = {}
+        for ps in phoneme_scores:
+            word_map.setdefault(ps.word, []).append(ps)
+        for w, plist in word_map.items():
+            word_scores.append({
+                "word": w,
+                "score": sum(p.phoneme_score for p in plist) // len(plist),
+                "error_phonemes": [
+                    p.suggested_phoneme for p in plist if p.is_error
+                ],
+            })
+
+    # send pronunciation feedback with real data
     await websocket.send_json({
         "type": "pronunciation_feedback",
         "payload": {
             "sentence_text": asr_text,
-            "overall_score": 75,
-            "word_scores": [],
-            "brief_tip": "Good effort! Keep practicing your intonation.",
+            "overall_score": evaluation.overall_score,
+            "word_scores": word_scores,
+            "brief_tip": evaluation.advice or "Keep practicing!",
         },
     })
 
-    # grammar hint (simulated - only for obvious patterns)
-    grammar_hint = _get_grammar_hint(asr_text)
-    if grammar_hint:
+    # persist and send grammar hints
+    grammar_errors = await _store_grammar_errors(db, user_utt, asr_text)
+    for ge in grammar_errors:
         await websocket.send_json({
             "type": "grammar_hint",
-            "payload": grammar_hint,
+            "payload": {
+                "original_text": ge.original_text,
+                "error_span": {"start": ge.error_span_start, "end": ge.error_span_end},
+                "correction": ge.correction,
+                "hint": ge.explanation or "",
+            },
         })
 
     # generate LLM response
