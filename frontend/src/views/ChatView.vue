@@ -189,9 +189,7 @@ async function startRecording() {
       recognition.onresult = (event: any) => {
         const transcript = event.results[0][0].transcript;
         if (transcript) {
-          // Show temporary message first
-          chatStore.addTemporaryMessage('user', transcript);
-          // Send recognized text as normal user_message
+          // sendMessage pushes the user bubble AND sends to server
           chatStore.sendMessage(transcript);
         }
         resetRecordingState();
@@ -199,13 +197,14 @@ async function startRecording() {
 
       recognition.onerror = (event: any) => {
         console.error('Speech recognition error:', event.error);
-        // Fallback: send audio via WebSocket
-        chatStore.sendAudio(new Blob(['voice'], { type: 'audio/webm' }));
         resetRecordingState();
       };
 
       recognition.onend = () => {
-        resetRecordingState();
+        // onend fires after onresult/onerror — ensure cleanup only if still recording
+        if (isRecording.value) {
+          resetRecordingState();
+        }
       };
 
       recognition.start();

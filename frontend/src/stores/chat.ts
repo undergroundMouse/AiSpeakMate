@@ -291,17 +291,8 @@ export const useChatStore = defineStore('chat', () => {
     // Stop AI speaking (user interruption via voice)
     stopSpeaking();
 
-    // Show temporary user message while ASR is processing
-    const tempId = `user-${++messageIdCounter}`;
-    messages.value.push({
-      id: tempId,
-      role: 'user',
-      content: '🎤 语音识别中...',
-      timestamp: new Date().toISOString(),
-      isTemporary: true,
-    });
-
     // Convert audio to base64 and send as JSON metadata frame
+    // The server will respond with asr_final which creates the user bubble
     const reader = new FileReader();
     reader.onload = () => {
       const base64 = (reader.result as string).split(',')[1]; // strip data:... prefix
@@ -316,8 +307,6 @@ export const useChatStore = defineStore('chat', () => {
       }));
     };
     reader.onerror = () => {
-      // Remove temporary message on error
-      messages.value = messages.value.filter(m => m.id !== tempId);
       connectionStatus.value.error = 'Failed to read audio data';
     };
     reader.readAsDataURL(audioBlob);
