@@ -112,9 +112,11 @@ export const useChatStore = defineStore('chat', () => {
 
         switch (data.type) {
           case 'tts_audio': {
-            // Play real TTS audio from server (Edge-TTS) if available
+            // Single TTS trigger: Edge-TTS audio if available, SpeechSynthesis fallback
             const payload = data.payload || {};
-            if (payload.audio_base64 && ttsEnabled.value) {
+            if (!ttsEnabled.value) break;
+            if (payload.audio_base64) {
+              // Play real Edge-TTS MP3 audio
               const binary = atob(payload.audio_base64);
               const bytes = new Uint8Array(binary.length);
               for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
@@ -122,8 +124,10 @@ export const useChatStore = defineStore('chat', () => {
               const url = URL.createObjectURL(blob);
               const audio = new Audio(url);
               audio.play().catch(() => {});
-              // Clean up blob URL after playback
               audio.onended = () => URL.revokeObjectURL(url);
+            } else if (payload.text) {
+              // Fallback: browser SpeechSynthesis
+              speakText(payload.text);
             }
             break;
           }
@@ -178,8 +182,6 @@ export const useChatStore = defineStore('chat', () => {
               if (payload.is_final) {
                 lastMsg.isTemporary = false;
                 lastMsg.id = payload.interrupt_id || lastMsg.id;
-                // Speak the AI response aloud
-                speakText(lastMsg.content);
               }
             } else {
               messages.value.push({
@@ -189,10 +191,6 @@ export const useChatStore = defineStore('chat', () => {
                 timestamp: new Date().toISOString(),
                 isTemporary: !payload.is_final,
               });
-              if (payload.is_final) {
-                // Speak the AI response aloud
-                speakText(payload.text || '');
-              }
             }
             if (!payload.is_final) {
               isAiSpeaking.value = true;
