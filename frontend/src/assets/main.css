@@ -423,6 +423,27 @@ a {
 }
 .dropdown-item:hover { background: var(--bg-card); }
 
+.btn-delete-scene {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(248,113,113,0.15);
+  color: var(--accent-danger);
+  font-size: 0.7rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  border: none;
+  cursor: pointer;
+  opacity: 0;
+}
+.scene-card:hover .btn-delete-scene { opacity: 1; }
+.btn-delete-scene:hover { background: var(--accent-danger); color: #fff; }
+
 /* Responsive */
 @media (max-width: 600px) {
   .scene-grid { grid-template-columns: 1fr 1fr; }

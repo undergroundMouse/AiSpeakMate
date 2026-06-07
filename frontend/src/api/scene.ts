@@ -79,6 +79,10 @@ export const sceneApi = {
     return apiClient.get<any[]>('/scenes/custom').then((res) => res.data);
   },
 
+  deleteCustom(id: string) {
+    return apiClient.delete(`/scenes/custom/${id}`).then((res) => res.data);
+  },
+
   createCustom(data: CustomSceneRequest) {
     return apiClient.post<CustomSceneResponse>('/scenes/custom', data, { timeout: 45000 }).then((res) => res.data);
   },

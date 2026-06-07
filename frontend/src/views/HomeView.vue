@@ -51,7 +51,8 @@
       <div v-if="customScenes.length > 0" style="margin-bottom:8px">
         <h2 class="section-title">自定义场景</h2>
         <div class="scene-grid">
-          <div v-for="scene in customScenes" :key="scene.scene_id" class="scene-card" @click="viewCustomScene(scene)">
+          <div v-for="scene in customScenes" :key="scene.scene_id" class="scene-card" @click="viewCustomScene(scene)" style="position:relative">
+            <button class="btn-delete-scene" @click.stop="deleteCustomScene(scene)" title="删除场景">✕</button>
             <div class="card-header">
               <span class="card-icon">✨</span>
               <h3>{{ scene.name }}</h3>
@@ -198,6 +199,16 @@ async function createCustomScene() {
   } catch (e: any) {
     customError.value = e?.response?.data?.detail || '场景生成失败';
   } finally { customLoading.value = false; }
+}
+
+async function deleteCustomScene(scene: any) {
+  const id = scene.scene_id?.toString().replace('custom_', '');
+  if (!id || id === scene.scene_id) return;
+  try {
+    await sceneApi.deleteCustom(id);
+    customScenes.value = customScenes.value.filter(s => s.scene_id !== scene.scene_id);
+    saveCustomScenes(customScenes.value);
+  } catch {}
 }
 
 function viewCustomScene(scene: any) {

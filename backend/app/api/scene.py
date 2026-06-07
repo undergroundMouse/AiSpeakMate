@@ -211,6 +211,27 @@ async def get_scene_detail(
     )
 
 
+@router.delete("/custom/{custom_scene_id}")
+async def delete_custom_scene(
+    custom_scene_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a custom scene."""
+    result = await db.execute(
+        select(CustomScene).where(
+            CustomScene.id == custom_scene_id,
+            CustomScene.user_id == user.id,
+        )
+    )
+    scene = result.scalar_one_or_none()
+    if scene is None:
+        raise HTTPException(status_code=404, detail="Custom scene not found")
+    await db.delete(scene)
+    await db.commit()
+    return {"status": "deleted", "custom_scene_id": str(custom_scene_id)}
+
+
 @router.post("/custom", status_code=status.HTTP_201_CREATED)
 async def create_custom_scene(
     body: CustomSceneRequest,
