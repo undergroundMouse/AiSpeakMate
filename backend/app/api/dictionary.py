@@ -94,7 +94,7 @@ _SENTENCE_PATTERNS = [
 
 
 async def _fetch_examples(word: str, client) -> list[str]:
-    """Try to get example sentences, fall back to templates."""
+    """Try to get example sentences: API → AI → templates."""
     examples = []
 
     # Try dictionary API for real examples
@@ -115,7 +115,26 @@ async def _fetch_examples(word: str, client) -> list[str]:
     except Exception:
         pass
 
-    # Generate template-based examples if not enough real ones
+    # Try AI-generated examples
+    if len(examples) < 3:
+        try:
+            from ..services.llm_service import generate_response as llm_gen
+            prompt = f'''Generate 3 simple English example sentences using the word "{word}".
+Return ONLY a JSON array of 3 strings, no explanation:
+["sentence 1", "sentence 2", "sentence 3"]'''
+            ai_resp = await llm_gen(prompt, "You are a helpful English teacher. Return valid JSON arrays only.")
+            if ai_resp:
+                import json as _json
+                ai_resp = ai_resp.strip().removeprefix("```json").removesuffix("```").strip()
+                ai_examples = _json.loads(ai_resp)
+                if isinstance(ai_examples, list):
+                    for ex in ai_examples:
+                        if isinstance(ex, str) and ex.strip() and ex not in examples:
+                            examples.append(ex.strip())
+        except Exception:
+            pass
+
+    # Fill remaining with templates
     need = 3 - len(examples)
     if need > 0:
         import random
