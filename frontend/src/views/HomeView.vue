@@ -1,215 +1,335 @@
 <template>
-  <div class="home">
-    <div class="hero">
-      <h1>AiSpeakMate</h1>
-      <p class="subtitle">AI 语言学习助手 — 随时随地练习口语</p>
+  <div class="home-page">
+    <!-- Hero -->
+    <div v-if="!auth.isAuthenticated" class="hero-section">
+      <h1>🎓 随时随地练习口语</h1>
+      <p class="subtitle">AI 驱动的英语口语学习助手 — 场景对话、实时纠错、发音评测</p>
     </div>
 
-    <!-- Authenticated: welcome + navigation -->
-    <div v-if="auth.isAuthenticated" class="dashboard">
-      <p class="welcome">欢迎回来，{{ auth.username }}</p>
-      <div class="dashboard-links">
-        <router-link to="/scenes" class="btn btn-primary">开始练习</router-link>
-        <router-link to="/progress" class="btn btn-secondary">我的进度</router-link>
+    <!-- Loading -->
+    <p v-if="loading" style="text-align:center;color:var(--text-secondary);padding:40px 0">加载场景中...</p>
+
+    <!-- Error -->
+    <p v-if="errorMsg" style="text-align:center;color:var(--accent-danger);padding:20px 0">{{ errorMsg }}</p>
+
+    <!-- Scene sections -->
+    <div v-if="!loading && !errorMsg">
+      <!-- Search -->
+      <input v-model="searchQuery" class="search-bar" type="text" placeholder="🔍 搜索场景..." @input="onSearch" />
+
+      <!-- Random challenge + Custom scene -->
+      <div style="display:flex;gap:10px;justify-content:center;margin-bottom:20px;flex-wrap:wrap">
+        <button class="btn-random-home" :disabled="randomLoading" @click="goToRandomScene" style="margin:0">
+          {{ randomLoading ? '🎲 匹配中...' : '🎲 随机挑战' }}
+        </button>
+        <button class="btn-random-home" style="background:linear-gradient(135deg, var(--accent-primary), #6366f1);margin:0" @click="showCustomScene = true">
+          ✨ 自定义场景
+        </button>
       </div>
-      <button class="btn-link" @click="auth.logout()">退出登录</button>
+
+      <!-- Categories -->
+      <div v-for="cat in filteredCategories" :key="cat.category_id" style="margin-bottom:8px">
+        <h2 class="section-title">{{ cat.category_name }}</h2>
+        <div class="scene-grid">
+          <div v-for="scene in cat.scenes" :key="scene.scene_id" class="scene-card" @click="goToScene(scene.scene_id)">
+            <div class="card-header">
+              <span class="card-icon">{{ sceneIcon(scene.name) }}</span>
+              <h3>{{ scene.name }}</h3>
+            </div>
+            <div class="difficulty-tags" v-if="scene.difficulty_levels?.length">
+              <span v-for="lvl in scene.difficulty_levels" :key="lvl" class="diff" :class="lvl">{{ DIFF_MAP[lvl] || lvl }}</span>
+            </div>
+            <p class="desc">{{ scene.description }}</p>
+            <div class="tags" v-if="scene.tags?.length">
+              <span v-for="tag in scene.tags" :key="tag" class="tag">{{ tag }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Custom scenes -->
+      <div v-if="customScenes.length > 0" style="margin-bottom:8px">
+        <h2 class="section-title">自定义场景</h2>
+        <div class="scene-grid">
+          <div v-for="scene in customScenes" :key="scene.scene_id" class="scene-card" @click="viewCustomScene(scene)" style="position:relative">
+            <button class="btn-delete-scene" @click.stop="deleteCustomScene(scene)" title="删除场景">✕</button>
+            <div class="card-header">
+              <span class="card-icon">✨</span>
+              <h3>{{ scene.name }}</h3>
+            </div>
+            <div class="difficulty-tags">
+              <span v-for="lvl in scene.difficulty_levels" :key="lvl" class="diff" :class="lvl">{{ DIFF_MAP[lvl] || lvl }}</span>
+            </div>
+            <p class="desc">{{ scene.description }}</p>
+            <div class="tags">
+              <span class="tag">自定义</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Empty state -->
+      <p v-if="totalScenes === 0 && !loading" style="text-align:center;color:var(--text-secondary);padding:40px 0">
+        暂无可用场景
+      </p>
     </div>
 
-    <!-- Not authenticated: login / register tabs -->
-    <div v-else class="auth-card">
-      <div class="tabs">
-        <button :class="{ active: tab === 'login' }" @click="tab = 'login'">登录</button>
-        <button :class="{ active: tab === 'register' }" @click="tab = 'register'">注册</button>
+    <!-- Custom scene modal -->
+    <div v-if="showCustomScene" class="modal-overlay" @click.self="showCustomScene=false">
+      <div class="modal-box" style="max-width:500px">
+        <h3>✨ 自定义场景</h3>
+        <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:12px">描述你想要练习的场景，AI 将自动生成角色、开场白、词汇和句式</p>
+        <input v-model="customTopic" placeholder="主题，如：在药店买药" style="width:100%;margin-bottom:8px" />
+        <input v-model="customRole" placeholder="AI角色，如：药剂师 (可选)" style="width:100%;margin-bottom:8px" />
+        <textarea v-model="customDesc" placeholder="详细描述 (可选)" style="width:100%;height:70px;margin-bottom:8px;padding:8px;border-radius:8px;border:1px solid var(--bg-card);background:var(--bg-primary);color:var(--text-primary);font-size:0.88rem;resize:vertical;font-family:inherit"></textarea>
+        <select v-model="customDifficulty" style="width:100%;margin-bottom:12px;padding:10px 14px;border-radius:8px;border:1px solid var(--bg-card);background:var(--bg-primary);color:var(--text-primary);font-size:0.9rem">
+          <option value="beginner">初级 — AI用简单词汇短句</option>
+          <option value="intermediate" selected>中级 — AI用日常对话水平</option>
+          <option value="advanced">高级 — AI用复杂表达</option>
+        </select>
+        <p v-if="customError" style="color:var(--accent-danger);font-size:0.8rem;margin-bottom:8px">{{ customError }}</p>
+        <div class="modal-actions">
+          <button class="btn-cancel" @click="showCustomScene=false">取消</button>
+          <button class="btn-confirm" :disabled="customLoading || !customTopic.trim()" @click="createCustomScene">
+            {{ customLoading ? 'AI 生成中...' : '生成场景' }}
+          </button>
+        </div>
       </div>
+    </div>
 
-      <!-- Login form -->
-      <form v-if="tab === 'login'" @submit.prevent="doLogin" class="auth-form">
-        <input v-model="loginForm.email" type="email" placeholder="邮箱" required />
-        <input v-model="loginForm.password" type="password" placeholder="密码" required />
-        <p v-if="errorMsg" class="error">{{ errorMsg }}</p>
-        <button type="submit" class="btn btn-primary" :disabled="loading">
-          {{ loading ? '登录中...' : '登录' }}
-        </button>
-      </form>
-
-      <!-- Register form -->
-      <form v-else @submit.prevent="doRegister" class="auth-form">
-        <input v-model="regForm.username" type="text" placeholder="用户名" required />
-        <input v-model="regForm.email" type="email" placeholder="邮箱" required />
-        <input v-model="regForm.password" type="password" placeholder="密码（至少6位）" required minlength="6" />
-        <p v-if="errorMsg" class="error">{{ errorMsg }}</p>
-        <button type="submit" class="btn btn-primary" :disabled="loading">
-          {{ loading ? '注册中...' : '注册' }}
-        </button>
-      </form>
+    <!-- Generated scene preview -->
+    <div v-if="customSceneData" class="modal-overlay" @click.self="customSceneData=null">
+      <div class="modal-box" style="max-width:520px;max-height:70vh;overflow-y:auto">
+        <h3>✨ {{ customSceneData.topic }}</h3>
+        <div style="margin:12px 0;padding:10px;background:var(--bg-primary);border-radius:8px">
+          <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:4px">AI 角色：</p>
+          <p style="font-size:0.9rem">{{ customSceneData.role_prompt }}</p>
+        </div>
+        <div style="margin:12px 0;padding:10px;background:var(--bg-primary);border-radius:8px;border-left:3px solid var(--accent-primary)">
+          <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:4px">开场白：</p>
+          <p style="font-size:0.95rem;font-style:italic">"{{ customSceneData.opening_line }}"</p>
+        </div>
+        <div v-if="customSceneData.vocab_list?.length" style="margin-bottom:10px">
+          <h4 style="font-size:0.8rem;color:var(--text-secondary)">词汇</h4>
+          <div style="display:flex;flex-wrap:wrap;gap:4px">
+            <span v-for="v in customSceneData.vocab_list" :key="v.word" style="padding:2px 8px;background:var(--bg-card);border-radius:4px;font-size:0.78rem">{{ v.word }} ({{ v.translation }})</span>
+          </div>
+        </div>
+        <div v-if="customSceneData.sentence_patterns?.length" style="margin-bottom:10px">
+          <h4 style="font-size:0.8rem;color:var(--text-secondary)">句式</h4>
+          <div v-for="(p,i) in customSceneData.sentence_patterns" :key="i" style="font-size:0.82rem;padding:3px 0;color:var(--text-primary)">{{ p.pattern }} <span style="color:var(--text-secondary)">({{ p.translation }})</span></div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn-cancel" @click="customSceneData=null">关闭</button>
+          <button class="btn-confirm" @click="startCustomScene">开始练习</button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
+import { useChatStore } from '@/stores/chat';
+import { useSceneStore } from '@/stores/scene';
+import { sceneApi, type CategoryWithScenes } from '@/api/scene';
+import { sessionApi } from '@/api/session';
+
+const DIFF_MAP: Record<string, string> = {
+  beginner: '初级', intermediate: '中级', advanced: '高级',
+};
 
 const auth = useAuthStore();
 const router = useRouter();
-const tab = ref<'login' | 'register'>('login');
+const sceneStore = useSceneStore();
+const chatStore = useChatStore();
+
 const loading = ref(false);
 const errorMsg = ref('');
+const searchQuery = ref('');
+const randomLoading = ref(false);
 
-const loginForm = reactive({ email: '', password: '' });
-const regForm = reactive({ username: '', email: '', password: '' });
+// Custom scene
+const showCustomScene = ref(false);
+const customTopic = ref('');
+const customRole = ref('');
+const customDesc = ref('');
+const customDifficulty = ref('intermediate');
+const customLoading = ref(false);
+const customError = ref('');
+const STORAGE_KEY = 'aispeakmate_custom_scenes';
 
-async function doLogin() {
-  errorMsg.value = '';
-  loading.value = true;
+function loadCustomScenes(): any[] {
+  try { return JSON.parse(sessionStorage.getItem(STORAGE_KEY) || '[]'); }
+  catch { return []; }
+}
+function saveCustomScenes(scenes: any[]) {
+  sessionStorage.setItem(STORAGE_KEY, JSON.stringify(scenes));
+}
+
+const customSceneData = ref<any>(null);
+const customScenes = ref<any[]>(loadCustomScenes());
+
+async function createCustomScene() {
+  if (!auth.isAuthenticated) { customError.value = '请先登录'; return; }
+  customError.value = ''; customLoading.value = true;
   try {
-    await auth.login(loginForm.email, loginForm.password);
-    router.push('/scenes');
+    const res = await sceneApi.createCustom({
+      topic: customTopic.value,
+      role: customRole.value || undefined,
+      description: customDesc.value || undefined,
+      difficulty: customDifficulty.value,
+    });
+    customSceneData.value = res;
+    // Add to custom scenes list for display
+    const newScene = {
+      scene_id: `custom_${Date.now()}`,
+      name: res.topic,
+      description: res.role_prompt,
+      difficulty_levels: [customDifficulty.value],
+      tags: ['custom'],
+      _custom: true,
+      _data: res,
+    };
+    customScenes.value.push(newScene);
+    saveCustomScenes(customScenes.value);
+    showCustomScene.value = false;
   } catch (e: any) {
-    errorMsg.value = e?.response?.data?.detail || '登录失败，请检查邮箱和密码';
-  } finally {
-    loading.value = false;
+    customError.value = e?.response?.data?.detail || '场景生成失败';
+  } finally { customLoading.value = false; }
+}
+
+async function deleteCustomScene(scene: any) {
+  const id = scene.scene_id?.toString().replace('custom_', '');
+  if (!id || id === scene.scene_id) return;
+  try {
+    await sceneApi.deleteCustom(id);
+    customScenes.value = customScenes.value.filter(s => s.scene_id !== scene.scene_id);
+    saveCustomScenes(customScenes.value);
+  } catch {}
+}
+
+function viewCustomScene(scene: any) {
+  if (!auth.isAuthenticated) return;
+  // Build complete data from scene object
+  const data = {
+    topic: scene.name,
+    role_prompt: scene.description || scene._data?.role_prompt || '',
+    opening_line: scene._data?.opening_line || 'Hello! How can I help you today?',
+    vocab_list: scene._data?.vocab_list || [],
+    sentence_patterns: scene._data?.sentence_patterns || [],
+    suggested_duration_minutes: 5,
+    ...scene._data,
+  };
+  sessionStorage.setItem('customSceneDetail', JSON.stringify(data));
+  router.push(`/scenes/custom_detail`);
+}
+async function startCustomFromList(scene: any) {
+  if (!auth.isAuthenticated) return;
+  customSceneData.value = scene._data;
+  await startCustomScene();
+}
+async function startCustomScene() {
+  if (!customSceneData.value) return;
+  try {
+    const session = await sessionApi.create({ scene_id: 1 });
+    chatStore.sceneId = session.scene_id;
+    // Store custom scene data for ChatView
+    sessionStorage.setItem('customScene', JSON.stringify(customSceneData.value));
+    router.push(`/chat/${session.session_id}`);
+  } catch (e: any) {
+    customError.value = '创建会话失败';
   }
 }
 
-async function doRegister() {
-  errorMsg.value = '';
-  if (regForm.password.length < 6) {
-    errorMsg.value = '密码至少6位';
-    return;
+const totalScenes = computed(() =>
+  sceneStore.categories.flatMap(c => c.scenes).length
+);
+
+const filteredCategories = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase();
+  if (!q) return sceneStore.categories;
+  const results: CategoryWithScenes[] = [];
+  for (const cat of sceneStore.categories) {
+    const matched = cat.scenes.filter(s =>
+      s.name.toLowerCase().includes(q) ||
+      s.description?.toLowerCase().includes(q) ||
+      s.tags?.some(t => t.toLowerCase().includes(q))
+    );
+    if (matched.length) results.push({ ...cat, scenes: matched });
   }
-  loading.value = true;
-  try {
-    await auth.register(regForm.username, regForm.email, regForm.password);
-    router.push('/scenes');
-  } catch (e: any) {
-    errorMsg.value = e?.response?.data?.detail || '注册失败，请稍后重试';
-  } finally {
-    loading.value = false;
-  }
+  return results;
+});
+
+function sceneIcon(name: string): string {
+  const n = name.toLowerCase();
+  if (n.includes('coffee') || n.includes('咖啡')) return '☕';
+  if (n.includes('restaurant') || n.includes('餐厅')) return '🍽️';
+  if (n.includes('shop') || n.includes('购物') || n.includes('clothes')) return '🛍️';
+  if (n.includes('airport') || n.includes('机场')) return '✈️';
+  if (n.includes('hotel') || n.includes('酒店')) return '🏨';
+  if (n.includes('direction') || n.includes('问路')) return '🗺️';
+  if (n.includes('interview') || n.includes('面试')) return '💼';
+  if (n.includes('meeting') || n.includes('会议')) return '📊';
+  return '🎯';
 }
+
+let debounce: ReturnType<typeof setTimeout>;
+function onSearch() { clearTimeout(debounce); debounce = setTimeout(() => {}, 200); }
+
+async function loadScenes() {
+  loading.value = true; errorMsg.value = '';
+  try { await sceneStore.fetchScenes(); }
+  catch { errorMsg.value = '加载场景失败'; }
+  finally { loading.value = false; }
+}
+
+function goToScene(id: number) {
+  if (!auth.isAuthenticated) { showAuth(); return; }
+  router.push(`/scenes/${id}`);
+}
+
+function showAuth() { router.push('/'); /* Auth modal is in App.vue */ }
+
+async function goToRandomScene() {
+  if (!auth.isAuthenticated) { showAuth(); return; }
+  randomLoading.value = true;
+  try {
+    const scene = await sceneApi.getRandom();
+    router.push(`/scenes/${scene.scene_id}`);
+  } catch { errorMsg.value = '获取随机场景失败'; }
+  finally { randomLoading.value = false; }
+}
+
+onMounted(() => {
+  loadScenes();
+  // Load custom scenes from backend
+  if (auth.isAuthenticated) {
+    sceneApi.listCustom().then(scenes => {
+      customScenes.value = scenes.map((s: any) => ({
+        scene_id: `custom_${s.custom_scene_id}`,
+        name: s.topic,
+        description: s.role_prompt || '',
+        difficulty_levels: [s.difficulty || 'intermediate'],
+        tags: ['custom'],
+        _custom: true,
+        _data: {
+          topic: s.topic,
+          role_prompt: s.role_prompt || '',
+          opening_line: s.opening_line || '',
+          vocab_list: s.vocab_list || [],
+          sentence_patterns: s.sentence_patterns || [],
+        },
+      }));
+      saveCustomScenes(customScenes.value);
+    }).catch(() => {});
+  }
+  // Also load from sessionStorage as cache
+  const cached = loadCustomScenes();
+  if (cached.length > 0 && customScenes.value.length === 0) {
+    customScenes.value = cached;
+  }
+});
 </script>
-
-<style scoped>
-.home {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 100vh;
-  padding: 24px;
-}
-.hero {
-  text-align: center;
-  margin-bottom: 32px;
-}
-.hero h1 {
-  font-size: 2.5rem;
-  color: var(--accent-primary);
-}
-.subtitle {
-  color: var(--text-secondary);
-  margin-top: 8px;
-}
-
-/* Dashboard */
-.dashboard {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 20px;
-}
-.welcome {
-  font-size: 1.2rem;
-}
-.dashboard-links {
-  display: flex;
-  gap: 12px;
-}
-
-/* Auth card */
-.auth-card {
-  background: var(--bg-secondary);
-  padding: 32px;
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  width: 100%;
-  max-width: 400px;
-}
-.tabs {
-  display: flex;
-  margin-bottom: 24px;
-  border-bottom: 2px solid var(--bg-card);
-}
-.tabs button {
-  flex: 1;
-  padding: 10px;
-  background: none;
-  color: var(--text-secondary);
-  font-size: 1rem;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -2px;
-  transition: all 0.2s;
-}
-.tabs button.active {
-  color: var(--accent-primary);
-  border-bottom-color: var(--accent-primary);
-}
-.auth-form {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-.auth-form input {
-  padding: 10px 14px;
-  border-radius: 8px;
-  border: 1px solid var(--bg-card);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 1rem;
-}
-.auth-form input:focus {
-  border-color: var(--accent-primary);
-  outline: none;
-}
-.error {
-  color: var(--accent-danger);
-  font-size: 0.9rem;
-}
-
-/* Buttons */
-.btn {
-  display: inline-block;
-  padding: 12px 28px;
-  border-radius: 8px;
-  font-size: 1rem;
-  font-weight: 600;
-  text-align: center;
-  transition: all 0.2s;
-}
-.btn-primary {
-  background: var(--accent-primary);
-  color: #0f172a;
-}
-.btn-primary:hover {
-  opacity: 0.85;
-}
-.btn-primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.btn-secondary {
-  background: var(--bg-card);
-  color: var(--text-primary);
-}
-.btn-secondary:hover {
-  background: #475569;
-}
-.btn-link {
-  background: none;
-  color: var(--text-secondary);
-  font-size: 0.9rem;
-  text-decoration: underline;
-}
-</style>

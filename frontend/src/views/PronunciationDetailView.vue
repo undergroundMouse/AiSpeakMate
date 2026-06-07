@@ -126,7 +126,7 @@
       <!-- Actions -->
       <div class="actions">
         <router-link :to="`/summary/${sessionId}`" class="btn btn-secondary">返回总结</router-link>
-        <router-link to="/scenes" class="btn btn-primary">继续练习</router-link>
+        <router-link to="/" class="btn btn-primary">继续练习</router-link>
       </div>
     </div>
   </div>

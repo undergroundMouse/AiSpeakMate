@@ -16,9 +16,15 @@ class Settings(BaseSettings):
     secret_key: str = "change-me-in-production"
     access_token_expire_minutes: int = 30
 
-    # External APIs
+    # LLM — supports Groq, DeepSeek, GLM, Moonshot, DashScope
+    llm_provider: str = ""       # groq | deepseek | glm | moonshot | dashscope
+    llm_api_key: str = ""        # API key for the provider above
+    llm_model: str = ""          # override default model (optional)
+    # Legacy
     groq_api_key: str = ""
     groq_model: str = "llama-3.1-70b-versatile"
+
+    # Pronunciation
     speechsuper_api_key: str = ""
     speechsuper_endpoint: str = "https://api.speechsuper.com"
 

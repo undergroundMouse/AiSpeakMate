@@ -75,6 +75,7 @@ class GrammarErrorOut(BaseModel):
     corrected_sentence: str | None = None
     explanation: str | None = None
     severity: str = "medium"
+    occurrence_count: int = 1  # V1.1: frequency of this error type in session
 
     class Config:
         from_attributes = True

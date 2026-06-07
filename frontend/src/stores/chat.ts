@@ -11,9 +11,13 @@ export interface ChatMessage {
     original: string;
     corrected: string;
     explanation: string;
+    correctedSentence?: string;
+    severity?: string;
     type: 'grammar' | 'pronunciation' | 'vocabulary';
   }>;
   pronunciation_score?: number;
+  audioBlob?: Blob;
+  audioUrl?: string;
 }
 
 export interface ConnectionStatus {
@@ -31,6 +35,7 @@ export const useChatStore = defineStore('chat', () => {
   });
   const isRecording = ref(false);
   const isAiSpeaking = ref(false);
+  const isPaused = ref(false);
   const ttsEnabled = ref(true);
   const currentSessionId = ref<string | null>(null);
   const sceneId = ref<number | null>(null);
@@ -38,8 +43,32 @@ export const useChatStore = defineStore('chat', () => {
   let ws: WebSocket | null = null;
   let messageIdCounter = 0;
   let currentInterruptId: string | null = null;
+  let currentAudio: HTMLAudioElement | null = null;
+  let playbackSpeed = 0.9;
+
+  function setPlaybackSpeed(speed: number) {
+    playbackSpeed = speed;
+    if (currentAudio) {
+      currentAudio.playbackRate = speed;
+    }
+  }
 
   // --- TTS (Speech Synthesis) ---
+  function _getTtsVoiceName(): string {
+    const v = localStorage.getItem('ttsVoice') || 'en-US-female';
+    const map: Record<string, string> = {
+      'en-US-female': 'en-US-JennyNeural',
+      'en-US-male': 'en-US-GuyNeural',
+      'en-GB-female': 'en-GB-SoniaNeural',
+      'en-GB-male': 'en-GB-RyanNeural',
+    };
+    return map[v] || 'en-US-JennyNeural';
+  }
+
+  function _getTtsVoiceKey(): string {
+    return localStorage.getItem('ttsVoice') || 'en-US-female';
+  }
+
   function speakText(text: string) {
     if (!ttsEnabled.value) return;
     if (!window.speechSynthesis) return;
@@ -47,10 +76,17 @@ export const useChatStore = defineStore('chat', () => {
     // Stop any ongoing speech (interrupt)
     window.speechSynthesis.cancel();
 
+    const voiceName = _getTtsVoiceName();
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-US';
-    utterance.rate = 0.9;  // slightly slower for learners
+    utterance.lang = voiceName.startsWith('en-GB') ? 'en-GB' : 'en-US';
+    utterance.rate = 0.9;
+    utterance.rate = playbackSpeed;
     utterance.pitch = 1.0;
+
+    // Match browser voice to selected Edge-TTS voice
+    const voices = window.speechSynthesis.getVoices();
+    const preferredVoice = voices.find(v => v.name === voiceName || v.name.includes(voiceName.split('-')[2] || ''));
+    if (preferredVoice) utterance.voice = preferredVoice;
 
     utterance.onstart = () => { isAiSpeaking.value = true; };
     utterance.onend = () => { isAiSpeaking.value = false; };
@@ -59,11 +95,46 @@ export const useChatStore = defineStore('chat', () => {
     window.speechSynthesis.speak(utterance);
   }
 
+  function pauseAudio() {
+    if (currentAudio && !currentAudio.paused) {
+      currentAudio.pause();
+      isPaused.value = true;
+    }
+    if (window.speechSynthesis && window.speechSynthesis.speaking) {
+      window.speechSynthesis.pause();
+      isPaused.value = true;
+    }
+  }
+
+  function resumeAudio() {
+    if (currentAudio && currentAudio.paused) {
+      currentAudio.play().catch(() => {});
+      isPaused.value = false;
+    }
+    if (window.speechSynthesis && window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
+      isPaused.value = false;
+    }
+  }
+
+  function togglePause() {
+    if (isPaused.value) {
+      resumeAudio();
+    } else {
+      pauseAudio();
+    }
+  }
+
   function stopSpeaking() {
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio = null;
+    }
     if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
     isAiSpeaking.value = false;
+    isPaused.value = false;
   }
 
   function toggleTts() {
@@ -94,6 +165,11 @@ export const useChatStore = defineStore('chat', () => {
         payload: {
           session_id: sessionId,
           scene_id: sceneId.value,
+          config: {
+            audio_format: 'pcm_s16le',
+            tts_voice: _getTtsVoiceKey(),
+          },
+          custom_scene: JSON.parse(sessionStorage.getItem('activeCustomScene') || 'null'),
         },
       }));
     };
@@ -109,7 +185,41 @@ export const useChatStore = defineStore('chat', () => {
         const payload = data.payload || {};
 
         switch (data.type) {
-          case 'session_started': {
+          case 'tts_audio': {
+            // Single TTS trigger: Edge-TTS audio if available, SpeechSynthesis fallback
+            const payload = data.payload || {};
+            if (!ttsEnabled.value) break;
+            if (payload.audio_base64) {
+              // Play real Edge-TTS MP3 audio
+              const binary = atob(payload.audio_base64);
+              const bytes = new Uint8Array(binary.length);
+              for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+              const blob = new Blob([bytes], { type: payload.audio_mime || 'audio/mp3' });
+              const url = URL.createObjectURL(blob);
+              const audio = new Audio(url);
+              audio.playbackRate = playbackSpeed;
+              currentAudio = audio;
+              isPaused.value = false;
+              // Store audio URL on the last AI message for replay
+              const lastAiMsg = [...messages.value].reverse().find(m => m.role === 'assistant');
+              if (lastAiMsg) {
+                lastAiMsg.audioUrl = url;
+                lastAiMsg.audioBlob = blob;
+              }
+              audio.play().catch(() => {});
+              audio.onended = () => {
+                URL.revokeObjectURL(url);
+                currentAudio = null;
+                isPaused.value = false;
+              };
+            } else if (payload.text) {
+              // Fallback: browser SpeechSynthesis
+              speakText(payload.text);
+            }
+            break;
+          }
+
+          case 'session_ready': {
             connectionStatus.value = { connected: true, connecting: false, error: null };
             // Sync session ID from server (in case server reused or created a new one)
             if (payload.session_id) {
@@ -159,8 +269,6 @@ export const useChatStore = defineStore('chat', () => {
               if (payload.is_final) {
                 lastMsg.isTemporary = false;
                 lastMsg.id = payload.interrupt_id || lastMsg.id;
-                // Speak the AI response aloud
-                speakText(lastMsg.content);
               }
             } else {
               messages.value.push({
@@ -170,10 +278,6 @@ export const useChatStore = defineStore('chat', () => {
                 timestamp: new Date().toISOString(),
                 isTemporary: !payload.is_final,
               });
-              if (payload.is_final) {
-                // Speak the AI response aloud
-                speakText(payload.text || '');
-              }
             }
             if (!payload.is_final) {
               isAiSpeaking.value = true;
@@ -199,7 +303,9 @@ export const useChatStore = defineStore('chat', () => {
                 original: payload.original_text || '',
                 corrected: payload.correction || '',
                 explanation: payload.hint || '',
-                type: 'grammar',
+                correctedSentence: payload.corrected_sentence || '',
+                severity: payload.severity || 'medium',
+                type: payload.hint_type === 'expression' ? 'vocabulary' : 'grammar',
               });
             }
             break;
@@ -325,6 +431,29 @@ export const useChatStore = defineStore('chat', () => {
     reader.readAsDataURL(audioBlob);
   }
 
+  function sendMessageWithAudio(text: string, audioBlob: Blob) {
+    // Create blob URL for playback
+    const audioUrl = URL.createObjectURL(audioBlob);
+    // Call sendMessage but attach audio to the user message
+    sendMessage(text);
+    // Find the just-created user message and attach audio
+    const lastUser = [...messages.value].reverse().find(m => m.role === 'user');
+    if (lastUser && !lastUser.audioBlob) {
+      lastUser.audioBlob = audioBlob;
+      lastUser.audioUrl = audioUrl;
+    }
+  }
+
+  function playMessageAudio(msg: ChatMessage) {
+    if (!msg.audioUrl && msg.audioBlob) {
+      msg.audioUrl = URL.createObjectURL(msg.audioBlob);
+    }
+    if (msg.audioUrl) {
+      const audio = new Audio(msg.audioUrl);
+      audio.play().catch(() => {});
+    }
+  }
+
   function addTemporaryMessage(role: 'user' | 'assistant', content: string) {
     messages.value.push({
       id: `${role}-${++messageIdCounter}`,
@@ -344,6 +473,7 @@ export const useChatStore = defineStore('chat', () => {
     connectionStatus,
     isRecording,
     isAiSpeaking,
+    isPaused,
     ttsEnabled,
     currentSessionId,
     sceneId,
@@ -351,8 +481,14 @@ export const useChatStore = defineStore('chat', () => {
     disconnect,
     sendMessage,
     sendAudio,
+    sendMessageWithAudio,
+    playMessageAudio,
     speakText,
     stopSpeaking,
+    pauseAudio,
+    resumeAudio,
+    togglePause,
+    setPlaybackSpeed,
     toggleTts,
     addTemporaryMessage,
     sendEndSession,

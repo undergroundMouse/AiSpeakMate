@@ -46,6 +46,7 @@ export interface SceneDetail {
 
 export interface CustomSceneRequest {
   topic: string;
+  description?: string;
   role?: string;
   difficulty: string;
   focus_grammar?: string[];
@@ -74,7 +75,15 @@ export const sceneApi = {
       .then((res) => res.data);
   },
 
+  listCustom() {
+    return apiClient.get<any[]>('/scenes/custom').then((res) => res.data);
+  },
+
+  deleteCustom(id: string) {
+    return apiClient.delete(`/scenes/custom/${id}`).then((res) => res.data);
+  },
+
   createCustom(data: CustomSceneRequest) {
-    return apiClient.post<CustomSceneResponse>('/scenes/custom', data).then((res) => res.data);
+    return apiClient.post<CustomSceneResponse>('/scenes/custom', data, { timeout: 45000 }).then((res) => res.data);
   },
 };

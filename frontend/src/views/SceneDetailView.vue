@@ -1,7 +1,7 @@
 <template>
   <div class="scene-detail">
     <header class="page-header">
-      <router-link to="/scenes" class="back-link">&larr; 返回场景列表</router-link>
+      <router-link to="/" class="back-link">&larr; 首页</router-link>
     </header>
 
     <!-- Loading -->
@@ -20,6 +20,12 @@
             {{ difficultyLabel }}
           </span>
         </div>
+      </div>
+
+      <!-- Custom scene description -->
+      <div v-if="(scene as any)._data?.description" class="desc-section">
+        <p class="desc-label">场景简介</p>
+        <p class="desc-text">{{ (scene as any)._data.description }}</p>
       </div>
 
       <div class="intro-section">
@@ -177,13 +183,40 @@ const difficultyClass = computed(() => difficultyLevel.value || '');
 
 async function loadDetail() {
   errorMsg.value = '';
-  const id = Number(route.params.id);
-  if (isNaN(id)) {
+  const id = route.params.id;
+
+  // Check for custom scene from sessionStorage
+  if (id === 'custom_detail' || (typeof id === 'string' && id.startsWith('custom_'))) {
+    const stored = sessionStorage.getItem('customSceneDetail');
+    if (stored) {
+      try {
+        const data = JSON.parse(stored);
+        sceneStore.currentScene = {
+          scene_id: 0,
+          name: data.topic || data.name || '自定义场景',
+          role_prompt: data.role_prompt || data.description || '',
+          opening_line: data.opening_line || 'Hello! How can I help you today?',
+          vocab_list: data.vocab_list || data.vocabulary || [],
+          sentence_patterns: data.sentence_patterns || data.patterns || [],
+          difficulty_settings: null,
+          suggested_duration_minutes: data.suggested_duration_minutes || 5,
+          _custom: true,
+          _data: data,
+        } as any;
+        return;
+      } catch {}
+    }
+    errorMsg.value = '场景数据无效';
+    return;
+  }
+
+  const numId = Number(id);
+  if (isNaN(numId)) {
     errorMsg.value = '无效的场景 ID';
     return;
   }
   try {
-    await sceneStore.fetchSceneDetail(id);
+    await sceneStore.fetchSceneDetail(numId);
   } catch (e: any) {
     errorMsg.value = '加载场景详情失败';
   }
@@ -194,8 +227,22 @@ async function startSession() {
   startError.value = '';
   starting.value = true;
   try {
-    const session = await sessionApi.create({ scene_id: scene.value.scene_id });
+    const isCustom = !!(scene.value as any)._custom;
+    const sceneId = isCustom ? 1 : scene.value.scene_id;
+    const customData = isCustom ? (scene.value as any)._data : null;
+    const session = await sessionApi.create({
+      scene_id: sceneId,
+      custom_scene_id: customData?.custom_scene_id || undefined,
+    });
     chatStore.sceneId = session.scene_id;
+    // Pass custom scene data for WebSocket (include custom_scene_id from session response)
+    if (isCustom && customData) {
+      const wsData = {
+        ...customData,
+        custom_scene_id: customData.custom_scene_id || session.custom_scene_id,
+      };
+      sessionStorage.setItem('activeCustomScene', JSON.stringify(wsData));
+    }
     router.push(`/chat/${session.session_id}`);
   } catch (e: any) {
     startError.value = e?.response?.data?.detail || '创建会话失败，请稍后重试';
@@ -265,6 +312,23 @@ onMounted(() => {
 .difficulty.beginner { color: var(--accent-success); }
 .difficulty.intermediate { color: var(--accent-warning); }
 .difficulty.advanced { color: var(--accent-danger); }
+
+.desc-section {
+  margin-bottom: 20px;
+  padding: 16px;
+  background: rgba(56,189,248,0.08);
+  border-radius: 8px;
+  border-left: 3px solid var(--accent-primary);
+}
+.desc-label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+.desc-text {
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
 
 .intro-section {
   margin-bottom: 20px;

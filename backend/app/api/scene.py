@@ -132,6 +132,54 @@ async def get_random_scene(
     )
 
 
+@router.get("/custom")
+async def list_custom_scenes(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all custom scenes created by the current user."""
+    result = await db.execute(
+        select(CustomScene)
+        .where(CustomScene.user_id == user.id)
+        .order_by(CustomScene.created_at.desc())
+        .limit(20)
+    )
+    scenes = result.scalars().all()
+    output = []
+    for s in scenes:
+        # Try to parse stored AI data from prompt_snapshot
+        role_prompt = ""
+        opening_line = ""
+        vocab_list = []
+        sentence_patterns = []
+        if s.prompt_snapshot:
+            try:
+                import json as _json3
+                data = _json3.loads(s.prompt_snapshot)
+                role_prompt = data.get("role_prompt", "")
+                opening_line = data.get("opening_line", "")
+                vocab_list = data.get("vocab_list", [])
+                sentence_patterns = data.get("sentence_patterns", [])
+            except Exception:
+                role_prompt = s.prompt_snapshot
+        if not role_prompt:
+            role_prompt = f"You are {s.role or 'a conversation partner'}. Topic: {s.topic}."
+        if not opening_line:
+            opening_line = f"Let's talk about {s.topic}. What do you think?"
+
+        output.append({
+            "custom_scene_id": str(s.id),
+            "topic": s.topic,
+            "role_prompt": role_prompt,
+            "opening_line": opening_line,
+            "vocab_list": vocab_list,
+            "sentence_patterns": sentence_patterns,
+            "difficulty": s.difficulty or "intermediate",
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+        })
+    return output
+
+
 @router.get("/{scene_id}", response_model=SceneDetail)
 async def get_scene_detail(
     scene_id: int,
@@ -185,6 +233,27 @@ async def get_scene_detail(
     )
 
 
+@router.delete("/custom/{custom_scene_id}")
+async def delete_custom_scene(
+    custom_scene_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a custom scene."""
+    result = await db.execute(
+        select(CustomScene).where(
+            CustomScene.id == custom_scene_id,
+            CustomScene.user_id == user.id,
+        )
+    )
+    scene = result.scalar_one_or_none()
+    if scene is None:
+        raise HTTPException(status_code=404, detail="Custom scene not found")
+    await db.delete(scene)
+    await db.commit()
+    return {"status": "deleted", "custom_scene_id": str(custom_scene_id)}
+
+
 @router.post("/custom", status_code=status.HTTP_201_CREATED)
 async def create_custom_scene(
     body: CustomSceneRequest,
@@ -199,20 +268,77 @@ async def create_custom_scene(
         difficulty=body.difficulty,
         focus_grammar=body.focus_grammar,
         focus_vocab=body.focus_vocab,
-        is_temporary=True,
+        is_temporary=False,
     )
     db.add(custom)
     await db.commit()
     await db.refresh(custom)
 
-    # Generate role_prompt and opening_line based on topic/role
-    role_name = body.role or "an English conversation partner"
-    role_prompt = f"You are {role_name}. Talk about: {body.topic}. Keep the conversation at {body.difficulty} level. Correct the user's grammar gently and encourage them."
-    opening_line = f"Hi! Let's talk about {body.topic}. What do you think about this topic?"
+    # Try to generate scene with AI
+    role_prompt = ""
+    opening_line = ""
+    vocab_list = []
+    pattern_list = []
+
+    try:
+        from ..services.llm_service import generate_response as llm_generate
+        desc_text = body.description or ""
+        desc_line = f"\nDescription: {desc_text}" if desc_text else ""
+        prompt = f"""Create an English conversation practice scene about: {body.topic}{desc_line}
+Role: {body.role or 'conversation partner'}
+Difficulty: {body.difficulty}
+
+Return ONLY a JSON object with these fields (no markdown, no explanation):
+{{
+  "role_prompt": "You are [role description]. [How to behave, tone, accent]. Keep response under 2 sentences.",
+  "opening_line": "[First thing the AI says to start the conversation. Must be in English.]",
+  "vocabulary": [{{"word": "...", "translation": "中文"}}, ... 5 words max],
+  "sentence_patterns": [{{"pattern": "...", "translation": "中文含义"}}, ... 3 patterns max]
+}}"""
+
+        ai_response = await llm_generate(prompt, "You are a JSON API. Return valid JSON only.")
+        if ai_response:
+            import json as _json
+            # Clean markdown fences if present
+            ai_response = ai_response.strip().removeprefix("```json").removesuffix("```").strip()
+            data = _json.loads(ai_response)
+            role_prompt = data.get("role_prompt", "")
+            opening_line = data.get("opening_line", "")
+            for v in data.get("vocabulary", []):
+                vocab_list.append({"word": v.get("word", ""), "translation": v.get("translation", "")})
+            for p in data.get("sentence_patterns", []):
+                pattern_list.append({"pattern": p.get("pattern", ""), "translation": p.get("translation", "")})
+    except Exception as e:
+        print(f"AI scene generation failed: {e}")
+
+    # Save ALL AI-generated data to DB as JSON bundle
+    if role_prompt:
+        import json as _json2
+        custom.prompt_snapshot = _json2.dumps({
+            "role_prompt": role_prompt,
+            "opening_line": opening_line,
+            "vocab_list": vocab_list,
+            "sentence_patterns": pattern_list,
+        }, ensure_ascii=False)
+        # Also save vocab and patterns to existing JSONB columns
+        if vocab_list:
+            custom.focus_vocab = [v["word"] for v in vocab_list if v.get("word")]
+        if pattern_list:
+            custom.focus_grammar = [p["pattern"] for p in pattern_list if p.get("pattern")]
+        await db.commit()
+
+    # Fallback if AI failed
+    if not role_prompt:
+        role_name = body.role or "an English conversation partner"
+        role_prompt = f"You are {role_name}. Talk about: {body.topic}. Keep the conversation at {body.difficulty} level."
+    if not opening_line:
+        opening_line = f"Hi! Let's talk about {body.topic}. What do you think about this topic?"
 
     return {
         "custom_scene_id": str(custom.id),
         "topic": body.topic,
         "role_prompt": role_prompt,
         "opening_line": opening_line,
+        "vocab_list": vocab_list,
+        "sentence_patterns": pattern_list,
     }
