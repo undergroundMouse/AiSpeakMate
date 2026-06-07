@@ -54,6 +54,19 @@
   --accent-success: #a78bfa;
 }
 
+.theme-light {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8fafc;
+  --bg-card: #e2e8f0;
+  --text-primary: #1e293b;
+  --text-secondary: #64748b;
+  --accent-primary: #0284c7;
+  --accent-success: #16a34a;
+  --accent-warning: #d97706;
+  --accent-danger: #dc2626;
+  --shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -322,6 +335,7 @@ a {
 .theme-dot.forest { background: linear-gradient(135deg, #022c22, #34d399); }
 .theme-dot.rose { background: linear-gradient(135deg, #1c1018, #f472b6); }
 .theme-dot.midnight { background: linear-gradient(135deg, #0a0a1a, #818cf8); }
+.theme-dot.light { background: linear-gradient(135deg, #e2e8f0, #0284c7); border-color: #cbd5e1; }
 
 .color-row {
   display: flex;

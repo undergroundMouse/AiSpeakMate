@@ -135,7 +135,7 @@ const showSettings = ref(false);
 const themes = [
   { key: 'default', label: '默认' }, { key: 'ocean', label: '海洋' },
   { key: 'sunset', label: '日落' }, { key: 'forest', label: '森林' },
-  { key: 'rose', label: '玫瑰' }, { key: 'midnight', label: '午夜' },
+  { key: 'rose', label: '玫瑰' }, { key: 'midnight', label: '午夜' }, { key: 'light', label: '纯白' },
 ];
 const currentTheme = ref(localStorage.getItem('theme') || 'default');
 const themeClass = ref(currentTheme.value === 'default' ? '' : `theme-${currentTheme.value}`);
