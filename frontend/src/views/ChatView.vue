@@ -26,12 +26,11 @@
         <div class="panel-section">
           <h4>核心词汇</h4>
           <div class="panel-vocab">
-            <a v-for="v in allVocab" :key="v.word" class="panel-word"
-              :href="'https://www.baidu.com/s?wd=' + encodeURIComponent(v.word + ' 英语')"
-              target="_blank" rel="noopener"
-              :title="'百度搜索: ' + v.word">
+            <span v-for="v in allVocab" :key="v.word" class="panel-word"
+              @click="lookupWord(v.word)"
+              :title="'查看词典: ' + v.word">
               {{ v.word }}<small v-if="v.translation"> ({{ v.translation }})</small>
-            </a>
+            </span>
             <!-- Add custom vocab -->
             <div v-if="addingVocab" class="panel-add-row">
               <input v-model="newVocab.word" placeholder="单词" class="panel-inline-input" size="10" @keydown.enter="confirmAddVocab" />
@@ -50,10 +49,9 @@
                 {{ typeof p === 'string' ? p : p.pattern }}
               </p>
               <small v-if="typeof p !== 'string' && p.translation" class="panel-pattern-trans">{{ (p as any).translation }}</small>
-              <a v-if="typeof p !== 'string'" class="panel-pattern-link"
-                :href="'https://www.baidu.com/s?wd=' + encodeURIComponent((p as any).pattern + ' 英语例句')"
-                target="_blank" rel="noopener"
-                title="搜索例句">🔗 例句</a>
+              <span v-if="typeof p !== 'string'" class="panel-pattern-link"
+                @click="lookupWord((p as any).pattern)"
+                title="查看例句">🔗 例句</span>
             </div>
             <!-- Add custom pattern -->
             <div v-if="addingPattern" class="panel-add-row">
@@ -167,6 +165,33 @@
 
     </div><!-- end chat-body -->
 
+    <!-- Dictionary modal -->
+    <div v-if="dictWord" class="modal-overlay" @click.self="dictWord = null">
+      <div class="modal-box dict-modal">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <h3 style="margin:0">📖 {{ dictWord }}</h3>
+          <button class="btn-cancel" style="padding:4px 12px" @click="dictWord = null">✕</button>
+        </div>
+        <div v-if="dictLoading" style="text-align:center;padding:20px;color:var(--text-secondary)">查询中...</div>
+        <div v-else-if="dictError" style="color:var(--accent-danger);text-align:center">{{ dictError }}</div>
+        <div v-else-if="dictData">
+          <div v-if="dictData.phonetic" style="margin-bottom:10px">
+            <span style="color:var(--accent-primary);font-size:0.9rem">{{ dictData.phonetic }}</span>
+            <button class="btn-sm" style="margin-left:8px;padding:2px 8px;background:var(--accent-primary);color:#0f172a;border-radius:4px;font-size:0.75rem" @click="speakDictWord">🔊 发音</button>
+          </div>
+          <div v-for="(meaning, idx) in dictData.meanings" :key="idx" style="margin-bottom:10px">
+            <span style="background:var(--accent-primary);color:#0f172a;padding:1px 8px;border-radius:4px;font-size:0.72rem;font-weight:700">{{ meaning.partOfSpeech }}</span>
+            <p style="margin-top:4px;line-height:1.6;font-size:0.88rem">
+              <span v-for="(def, di) in meaning.definitions" :key="di">
+                <strong>{{ di + 1 }}.</strong> {{ def.definition }}
+                <span v-if="def.example" style="display:block;color:var(--text-secondary);font-size:0.8rem;font-style:italic;margin:2px 0 4px 8px">例: {{ def.example }}</span>
+              </span>
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Input area -->
     <div class="input-area">
       <button
@@ -273,6 +298,45 @@ const speedLabel = computed(() => speeds[speedIdx.value] + 'x');
 function cycleSpeed() {
   speedIdx.value = (speedIdx.value + 1) % speeds.length;
   chatStore.setPlaybackSpeed(speeds[speedIdx.value]);
+}
+
+// Dictionary lookup
+const dictWord = ref<string | null>(null);
+const dictLoading = ref(false);
+const dictError = ref('');
+const dictData = ref<any>(null);
+
+async function lookupWord(word: string) {
+  dictWord.value = word;
+  dictLoading.value = true;
+  dictError.value = '';
+  dictData.value = null;
+  try {
+    const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`);
+    if (!res.ok) throw new Error('Word not found');
+    const data = await res.json();
+    const entry = data[0];
+    dictData.value = {
+      phonetic: entry.phonetic || (entry.phonetics?.[0]?.text) || '',
+      meanings: entry.meanings?.slice(0, 5).map((m: any) => ({
+        partOfSpeech: m.partOfSpeech,
+        definitions: m.definitions?.slice(0, 3).map((d: any) => ({
+          definition: d.definition,
+          example: d.example || '',
+        })) || [],
+      })) || [],
+    };
+  } catch {
+    dictError.value = `未找到 "${word}" 的释义`;
+  } finally {
+    dictLoading.value = false;
+  }
+}
+
+function speakDictWord() {
+  if (!dictWord.value) return;
+  chatStore.stopSpeaking();
+  chatStore.speakText(dictWord.value);
 }
 
 function replayAiAudio(msg: any) {
@@ -709,6 +773,13 @@ onUnmounted(() => {
   justify-content: center;
 }
 .panel-inline-btn:hover { background: var(--accent-primary); color: #0f172a; }
+
+/* Dictionary modal */
+.dict-modal {
+  max-width: 480px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
 
 .btn-end {
   padding: 6px 14px;
