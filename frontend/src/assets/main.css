@@ -67,6 +67,19 @@
   --shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
 }
 
+.theme-black {
+  --bg-primary: #000000;
+  --bg-secondary: #111111;
+  --bg-card: #222222;
+  --text-primary: #f5f5f5;
+  --text-secondary: #888888;
+  --accent-primary: #ffffff;
+  --accent-success: #4ade80;
+  --accent-warning: #fbbf24;
+  --accent-danger: #f87171;
+  --shadow: 0 4px 24px rgba(255, 255, 255, 0.05);
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -336,6 +349,7 @@ a {
 .theme-dot.rose { background: linear-gradient(135deg, #1c1018, #f472b6); }
 .theme-dot.midnight { background: linear-gradient(135deg, #0a0a1a, #818cf8); }
 .theme-dot.light { background: linear-gradient(135deg, #e2e8f0, #0284c7); border-color: #cbd5e1; }
+.theme-dot.black { background: linear-gradient(135deg, #000, #333); }
 
 .color-row {
   display: flex;
