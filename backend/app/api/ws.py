@@ -163,6 +163,66 @@ async def _store_grammar_errors(
         # Common misspellings
         {"trigger": "tommorrow", "check": lambda t: "tommorrow" in t, "error_type": "spelling", "match": "tommorrow", "correction": "tomorrow", "explanation": "拼写应为 'tomorrow'", "severity": "low"},
         {"trigger": "becuase", "check": lambda t: "becuase" in t, "error_type": "spelling", "match": "becuase", "correction": "because", "explanation": "拼写应为 'because'", "severity": "low"},
+        # Verb form errors (gerund vs infinitive)
+        {"trigger": "enjoy to", "check": lambda t: "enjoy to" in t, "error_type": "gerund", "match": "enjoy to", "correction": "enjoy", "explanation": "'enjoy' 后接动名词 (-ing)，如 'enjoy doing'", "severity": "medium"},
+        {"trigger": "finish to", "check": lambda t: "finish to" in t, "error_type": "gerund", "match": "finish to", "correction": "finish", "explanation": "'finish' 后接动名词 (-ing)，如 'finish doing'", "severity": "medium"},
+        {"trigger": "practice to", "check": lambda t: "practice to" in t, "error_type": "gerund", "match": "practice to", "correction": "practice", "explanation": "'practice' 后接动名词 (-ing)，如 'practice speaking'", "severity": "medium"},
+        {"trigger": "suggest to", "check": lambda t: "suggest to" in t, "error_type": "gerund", "match": "suggest to", "correction": "suggest", "explanation": "'suggest' 后接动名词 (-ing)，如 'suggest going'", "severity": "medium"},
+        {"trigger": "avoid to", "check": lambda t: "avoid to" in t, "error_type": "gerund", "match": "avoid to", "correction": "avoid", "explanation": "'avoid' 后接动名词 (-ing)，如 'avoid doing'", "severity": "medium"},
+        # Modal verb errors
+        {"trigger": "can to", "check": lambda t: "can to" in t, "error_type": "modal verb", "match": "can to", "correction": "can", "explanation": "情态动词 'can' 后直接跟动词原形，不需 'to'", "severity": "medium"},
+        {"trigger": "must to", "check": lambda t: "must to" in t, "error_type": "modal verb", "match": "must to", "correction": "must", "explanation": "情态动词 'must' 后直接跟动词原形", "severity": "medium"},
+        {"trigger": "should to", "check": lambda t: "should to" in t, "error_type": "modal verb", "match": "should to", "correction": "should", "explanation": "情态动词后直接跟动词原形，不需 'to'", "severity": "medium"},
+        {"trigger": "will to", "check": lambda t: "will to" in t and "willing" not in t, "error_type": "modal verb", "match": "will to", "correction": "will", "explanation": "'will' 后直接跟动词原形，不需 'to'", "severity": "medium"},
+        # Comparative / Superlative errors
+        {"trigger": "more better", "check": lambda t: "more better" in t, "error_type": "comparative", "match": "more better", "correction": "better", "explanation": "'better' 已经是比较级，不需加 'more'", "severity": "medium"},
+        {"trigger": "more bigger", "check": lambda t: "more bigger" in t, "error_type": "comparative", "match": "more bigger", "correction": "bigger", "explanation": "单音节词加 -er 构成比较级，不需 'more'", "severity": "medium"},
+        {"trigger": "more faster", "check": lambda t: "more faster" in t, "error_type": "comparative", "match": "more faster", "correction": "faster", "explanation": "'faster' 已经是比较级，不需加 'more'", "severity": "medium"},
+        {"trigger": "most best", "check": lambda t: "most best" in t, "error_type": "superlative", "match": "most best", "correction": "best", "explanation": "'best' 已经是最高级，不需加 'most'", "severity": "medium"},
+        # Countable / Uncountable errors
+        {"trigger": "many money", "check": lambda t: "many money" in t, "error_type": "countable", "match": "many money", "correction": "much money", "explanation": "'money' 是不可数名词，应用 'much' 而非 'many'", "severity": "medium"},
+        {"trigger": "many information", "check": lambda t: "many information" in t, "error_type": "countable", "match": "many information", "correction": "much information", "explanation": "'information' 是不可数名词，应用 'much'", "severity": "medium"},
+        {"trigger": "many advice", "check": lambda t: "many advice" in t, "error_type": "countable", "match": "many advice", "correction": "much advice", "explanation": "'advice' 是不可数名词，应用 'much'", "severity": "medium"},
+        {"trigger": "many furniture", "check": lambda t: "many furniture" in t, "error_type": "countable", "match": "many furniture", "correction": "much furniture", "explanation": "'furniture' 是不可数名词，应用 'much'", "severity": "medium"},
+        {"trigger": "a furniture", "check": lambda t: "a furniture" in t, "error_type": "countable", "match": "a furniture", "correction": "a piece of furniture", "explanation": "'furniture' 是不可数名词，用 'a piece of furniture'", "severity": "low"},
+        {"trigger": "a advice", "check": lambda t: "a advice" in t, "error_type": "countable", "match": "a advice", "correction": "a piece of advice", "explanation": "'advice' 是不可数名词，用 'a piece of advice'", "severity": "low"},
+        # Pronoun errors
+        {"trigger": "me go", "check": lambda t: "me go" in t, "error_type": "pronoun", "match": "me go", "correction": "I go", "explanation": "主语位置应使用主格 'I' 而非宾格 'me'", "severity": "medium"},
+        {"trigger": "him go", "check": lambda t: "him go" in t, "error_type": "pronoun", "match": "him go", "correction": "he goes", "explanation": "主语位置应使用主格 'he' 而非宾格 'him'", "severity": "medium"},
+        {"trigger": "her go", "check": lambda t: "her go" in t, "error_type": "pronoun", "match": "her go", "correction": "she goes", "explanation": "主语位置应使用主格 'she' 而非宾格 'her'", "severity": "medium"},
+        {"trigger": "them go", "check": lambda t: "them go" in t, "error_type": "pronoun", "match": "them go", "correction": "they go", "explanation": "主语位置应使用主格 'they' 而非宾格 'them'", "severity": "medium"},
+        # Adjective / Adverb confusion
+        {"trigger": "drive careful", "check": lambda t: "drive careful" in t, "error_type": "adjective/adverb", "match": "drive careful", "correction": "drive carefully", "explanation": "修饰动词应用副词 'carefully' 而非形容词 'careful'", "severity": "medium"},
+        {"trigger": "speak slow", "check": lambda t: "speak slow" in t, "error_type": "adjective/adverb", "match": "speak slow", "correction": "speak slowly", "explanation": "修饰动词应用副词 'slowly' 而非形容词 'slow'", "severity": "low"},
+        {"trigger": "write good", "check": lambda t: "write good" in t, "error_type": "adjective/adverb", "match": "write good", "correction": "write well", "explanation": "修饰动词应用副词 'well' 而非形容词 'good'", "severity": "medium"},
+        # Preposition errors (more)
+        {"trigger": "arrive to", "check": lambda t: "arrive to" in t, "error_type": "preposition", "match": "arrive to", "correction": "arrive at/in", "explanation": "'arrive' 后接 'at'(小地方)或 'in'(大地方)，不用 'to'", "severity": "medium"},
+        {"trigger": "discuss about", "check": lambda t: "discuss about" in t, "error_type": "preposition", "match": "discuss about", "correction": "discuss", "explanation": "'discuss' 直接接宾语，不需 'about'", "severity": "medium"},
+        {"trigger": "enter into", "check": lambda t: "enter into" in t, "error_type": "preposition", "match": "enter into", "correction": "enter", "explanation": "'enter' 直接接地点，不需 'into'", "severity": "low"},
+        {"trigger": "married with", "check": lambda t: "married with" in t, "error_type": "preposition", "match": "married with", "correction": "married to", "explanation": "'和某人结婚' 用 'married to' 而非 'married with'", "severity": "medium"},
+        {"trigger": "look forward to", "check": lambda t: "look forward to" in t, "error_type": "gerund", "match": "look forward to", "correction": "look forward to", "explanation": "'look forward to' 中的 'to' 是介词，后接 -ing 形式", "severity": "low"},
+        # More Chinese-English specific errors
+        {"trigger": "according to me", "check": lambda t: "according to me" in t, "error_type": "expression", "match": "according to me", "correction": "in my opinion", "explanation": "用 'in my opinion' 比 'according to me' 更地道", "severity": "low"},
+        {"trigger": "in my idea", "check": lambda t: "in my idea" in t, "error_type": "expression", "match": "in my idea", "correction": "in my opinion", "explanation": "应使用 'in my opinion' 表达观点", "severity": "low"},
+        {"trigger": "according to my opinion", "check": lambda t: "according to my opinion" in t, "error_type": "expression", "match": "according to my opinion", "correction": "in my opinion", "explanation": "直接用 'in my opinion' 即可", "severity": "low"},
+        {"trigger": "it's depend", "check": lambda t: "it's depend" in t or "it is depend" in t, "error_type": "verb form", "match": "depend", "correction": "it depends", "explanation": "主语 'it' 为第三人称单数，动词需加 -s", "severity": "medium"},
+        {"trigger": "how to say", "check": lambda t: "how to say" in t, "error_type": "expression", "match": "how to say", "correction": "how do you say", "explanation": "询问表达方式应用 'how do you say...?'", "severity": "low"},
+        {"trigger": "how to spell", "check": lambda t: "how to spell" in t, "error_type": "expression", "match": "how to spell", "correction": "how do you spell", "explanation": "询问拼写应用 'how do you spell...?'", "severity": "low"},
+        {"trigger": "i am agree", "check": lambda t: "i am agree" in t, "error_type": "expression", "match": "i am agree", "correction": "I agree", "explanation": "'agree' 是动词，直接说 'I agree'，不需 'am'", "severity": "medium"},
+        {"trigger": "i am not agree", "check": lambda t: "i am not agree" in t, "error_type": "expression", "match": "i am not agree", "correction": "I don't agree", "explanation": "'agree' 的否定形式用 'don't agree'", "severity": "medium"},
+        {"trigger": "i very much like", "check": lambda t: "i very much like" in t, "error_type": "word order", "match": "i very much like", "correction": "I like ... very much", "explanation": "英语中 'very much' 通常放在句末", "severity": "low"},
+        {"trigger": "for a long time", "check": lambda t: "i have not see you for a long time" in t, "error_type": "tense", "match": "have not see", "correction": "haven't seen", "explanation": "现在完成时应用过去分词 'seen'", "severity": "medium"},
+        # Confusing word pairs
+        {"trigger": "there is many", "check": lambda t: "there is many" in t, "error_type": "agreement", "match": "there is many", "correction": "there are many", "explanation": "'many' + 复数名词应用 'there are'", "severity": "medium"},
+        {"trigger": "there is some", "check": lambda t: "there is some" in t and "there is some people" not in t and "there is some water" not in t, "error_type": "agreement", "match": "there is some", "correction": "there are some", "explanation": "可数名词复数前用 'there are'", "severity": "low"},
+        {"trigger": "its a", "check": lambda t: "its a" in t, "error_type": "spelling", "match": "its a", "correction": "it's a", "explanation": "缩写 'it is' → 'it's'，'its' 表示所有格", "severity": "medium"},
+        {"trigger": "there seats", "check": lambda t: "there seats" in t, "error_type": "spelling", "match": "there seats", "correction": "their seats", "explanation": "表示所有格应用 'their' 而非 'there'", "severity": "medium"},
+        {"trigger": "your welcome", "check": lambda t: "your welcome" in t, "error_type": "spelling", "match": "your welcome", "correction": "you're welcome", "explanation": "应为 'you're' (you are) 而非 'your' (你的)", "severity": "medium"},
+        {"trigger": "there going", "check": lambda t: "there going" in t, "error_type": "spelling", "match": "there going", "correction": "they're going", "explanation": "应为 'they're' (they are) 而非 'there' (那里)", "severity": "medium"},
+        # Missing 'be' verb
+        {"trigger": "i hungry", "check": lambda t: "i hungry" in t and "i am hungry" not in t, "error_type": "missing be", "match": "i hungry", "correction": "I am hungry", "explanation": "形容词前需要 be 动词：'I am hungry'", "severity": "medium"},
+        {"trigger": "i tired", "check": lambda t: "i tired" in t and "i am tired" not in t, "error_type": "missing be", "match": "i tired", "correction": "I am tired", "explanation": "形容词前需要 be 动词：'I am tired'", "severity": "medium"},
+        {"trigger": "he happy", "check": lambda t: "he happy" in t and "he is happy" not in t, "error_type": "missing be", "match": "he happy", "correction": "he is happy", "explanation": "形容词前需要 be 动词：'he is happy'", "severity": "medium"},
     ]
 
     # Helper: check word boundary
