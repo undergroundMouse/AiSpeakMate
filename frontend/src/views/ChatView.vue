@@ -37,7 +37,34 @@
           <div class="role-label">{{ msg.role === 'user' ? '你' : 'AI' }}</div>
           <div class="content">{{ msg.content }}</div>
 
-          <!-- Translate button for AI messages -->
+          <!-- Action buttons row -->
+          <div class="msg-actions">
+            <!-- Speaker button: replay AI TTS -->
+            <button
+              v-if="msg.role === 'assistant' && !msg.isTemporary"
+              class="btn-speaker"
+              :title="'播放AI语音'"
+              @click="chatStore.speakText(msg.content)"
+            >🔊</button>
+            <!-- Speaker button: play user recording -->
+            <button
+              v-if="msg.role === 'user' && (msg.audioUrl || msg.audioBlob) && !msg.isTemporary"
+              class="btn-speaker"
+              :title="'播放我的录音'"
+              @click="chatStore.playMessageAudio(msg)"
+            >🔊</button>
+            <!-- Translate button for AI messages -->
+            <button
+              v-if="msg.role === 'assistant' && !msg.isTemporary"
+              class="btn-translate"
+              :class="{ active: translations[msg.id] }"
+              :disabled="translatingId === msg.id"
+              @click="toggleTranslate(msg.id, msg.content)"
+              :title="translations[msg.id] ? '隐藏翻译' : '翻译成中文'"
+            >
+              {{ translatingId === msg.id ? '...' : (translations[msg.id] ? '隐藏' : '译') }}
+            </button>
+          </div>
           <button
             v-if="msg.role === 'assistant' && !msg.isTemporary"
             class="btn-translate"
@@ -201,13 +228,15 @@ function sendText() {
   inputText.value = '';
 }
 
-// --- Speech Recognition (browser built-in) ---
+// --- Speech Recognition + Audio Capture (browser built-in) ---
 const isRecording = ref(false);
 const recordingDuration = ref(0);
 let recognition: any = null;
+let audioRecorder: MediaRecorder | null = null;
+let audioChunks: BlobPart[] = [];
+let audioStream: MediaStream | null = null;
 let recordingTimer: ReturnType<typeof setInterval> | null = null;
 
-// Check for browser SpeechRecognition support
 const SpeechRecognitionAPI =
   (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
@@ -220,8 +249,20 @@ async function toggleRecording() {
 }
 
 async function startRecording() {
+  // Start audio capture (for playback) in all cases
+  try {
+    audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioRecorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm' });
+    audioChunks = [];
+    audioRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) audioChunks.push(e.data);
+    };
+    audioRecorder.start(250);
+  } catch (err) {
+    console.error('Audio capture failed:', err);
+  }
+
   if (SpeechRecognitionAPI) {
-    // Use browser's built-in speech recognition for accurate ASR
     try {
       recognition = new SpeechRecognitionAPI();
       recognition.lang = 'en-US';
@@ -232,67 +273,57 @@ async function startRecording() {
       recognition.onresult = (event: any) => {
         const transcript = event.results[0][0].transcript;
         if (transcript) {
-          // sendMessage pushes the user bubble AND sends to server
-          chatStore.sendMessage(transcript);
+          // Stop audio recorder to get the blob
+          stopAudioRecorder();
+          const audioBlob = audioChunks.length > 0
+            ? new Blob(audioChunks, { type: 'audio/webm' })
+            : null;
+          if (audioBlob) {
+            chatStore.sendMessageWithAudio(transcript, audioBlob);
+          } else {
+            chatStore.sendMessage(transcript);
+          }
         }
         resetRecordingState();
       };
 
       recognition.onerror = (event: any) => {
         console.error('Speech recognition error:', event.error);
+        stopAudioRecorder();
         resetRecordingState();
       };
 
       recognition.onend = () => {
-        // onend fires after onresult/onerror — ensure cleanup only if still recording
         if (isRecording.value) {
+          stopAudioRecorder();
           resetRecordingState();
         }
       };
 
       recognition.start();
       isRecording.value = true;
-
       recordingDuration.value = 0;
-      recordingTimer = setInterval(() => {
-        recordingDuration.value++;
-      }, 1000);
+      recordingTimer = setInterval(() => { recordingDuration.value++; }, 1000);
     } catch (err) {
       console.error('Speech recognition start failed:', err);
+      stopAudioRecorder();
       isRecording.value = false;
     }
   } else {
-    // Fallback for browsers without SpeechRecognition: use audio recording
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-      const chunks: BlobPart[] = [];
+    // Fallback: audio-only recording
+    isRecording.value = true;
+    recordingDuration.value = 0;
+    recordingTimer = setInterval(() => { recordingDuration.value++; }, 1000);
+  }
+}
 
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data);
-      };
-
-      mediaRecorder.onstop = () => {
-        stream.getTracks().forEach((t) => t.stop());
-        if (chunks.length > 0) {
-          chatStore.sendAudio(new Blob(chunks, { type: 'audio/webm' }));
-        }
-        resetRecordingState();
-      };
-
-      mediaRecorder.start(250);
-      isRecording.value = true;
-
-      recordingDuration.value = 0;
-      recordingTimer = setInterval(() => {
-        recordingDuration.value++;
-      }, 1000);
-
-      // Store for stopRecording
-      (window as any).__fallbackRecorder = mediaRecorder;
-    } catch (err) {
-      console.error('Failed to start recording:', err);
-    }
+function stopAudioRecorder() {
+  if (audioRecorder && audioRecorder.state === 'recording') {
+    audioRecorder.stop();
+  }
+  if (audioStream) {
+    audioStream.getTracks().forEach(t => t.stop());
+    audioStream = null;
   }
 }
 
@@ -309,11 +340,19 @@ function stopRecording() {
   if (recognition) {
     recognition.stop();
     recognition = null;
-  } else if ((window as any).__fallbackRecorder) {
-    const mr = (window as any).__fallbackRecorder;
-    if (mr.state === 'recording') mr.stop();
-    (window as any).__fallbackRecorder = null;
   }
+  // For fallback mode: stop recorder, send audio
+  if (!SpeechRecognitionAPI && audioRecorder && audioRecorder.state === 'recording') {
+    audioRecorder.onstop = () => {
+      if (audioChunks.length > 0) {
+        const blob = new Blob(audioChunks, { type: 'audio/webm' });
+        chatStore.sendAudio(blob);
+      }
+      resetRecordingState();
+    };
+  }
+  stopAudioRecorder();
+  resetRecordingState();
 }
 
 async function endSession() {
@@ -473,6 +512,35 @@ onUnmounted(() => {
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* Message action buttons */
+.msg-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+.btn-speaker {
+  padding: 2px 10px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.1);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-speaker:hover {
+  background: var(--accent-success);
+  color: #0f172a;
+}
+.message-row.user .btn-speaker {
+  background: rgba(0,0,0,0.15);
+  color: rgba(0,0,0,0.6);
+}
+.message-row.user .btn-speaker:hover {
+  background: rgba(0,0,0,0.3);
+  color: #000;
 }
 
 /* Translate button */

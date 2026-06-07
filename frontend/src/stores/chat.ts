@@ -14,6 +14,8 @@ export interface ChatMessage {
     type: 'grammar' | 'pronunciation' | 'vocabulary';
   }>;
   pronunciation_score?: number;
+  audioBlob?: Blob;
+  audioUrl?: string;
 }
 
 export interface ConnectionStatus {
@@ -325,6 +327,29 @@ export const useChatStore = defineStore('chat', () => {
     reader.readAsDataURL(audioBlob);
   }
 
+  function sendMessageWithAudio(text: string, audioBlob: Blob) {
+    // Create blob URL for playback
+    const audioUrl = URL.createObjectURL(audioBlob);
+    // Call sendMessage but attach audio to the user message
+    sendMessage(text);
+    // Find the just-created user message and attach audio
+    const lastUser = [...messages.value].reverse().find(m => m.role === 'user');
+    if (lastUser && !lastUser.audioBlob) {
+      lastUser.audioBlob = audioBlob;
+      lastUser.audioUrl = audioUrl;
+    }
+  }
+
+  function playMessageAudio(msg: ChatMessage) {
+    if (!msg.audioUrl && msg.audioBlob) {
+      msg.audioUrl = URL.createObjectURL(msg.audioBlob);
+    }
+    if (msg.audioUrl) {
+      const audio = new Audio(msg.audioUrl);
+      audio.play().catch(() => {});
+    }
+  }
+
   function addTemporaryMessage(role: 'user' | 'assistant', content: string) {
     messages.value.push({
       id: `${role}-${++messageIdCounter}`,
@@ -351,6 +376,8 @@ export const useChatStore = defineStore('chat', () => {
     disconnect,
     sendMessage,
     sendAudio,
+    sendMessageWithAudio,
+    playMessageAudio,
     speakText,
     stopSpeaking,
     toggleTts,
