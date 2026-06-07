@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
@@ -37,6 +38,7 @@ class Scene(Base):
     tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     suggested_duration: Mapped[int] = mapped_column(Integer, default=300)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.utcnow())
 
     category: Mapped["SceneCategory"] = relationship(back_populates="scenes")
     vocabulary: Mapped[list["SceneVocabulary"]] = relationship(

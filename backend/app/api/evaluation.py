@@ -268,8 +268,8 @@ async def correct_grammar(
     corrected = text
 
     # Apply corrections
-    for err in sorted(errors, key=lambda x: x["span"]["start"], reverse=True):
-        sp = err["span"]
+    for err in sorted(errors, key=lambda x: x["error_span"]["start"], reverse=True):
+        sp = err["error_span"]
         corrected = corrected[:sp["start"]] + err["correction"] + corrected[sp["end"]:]
 
     if req.mode == "light":
