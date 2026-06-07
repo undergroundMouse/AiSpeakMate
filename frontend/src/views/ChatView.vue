@@ -65,16 +65,6 @@
               {{ translatingId === msg.id ? '...' : (translations[msg.id] ? '隐藏' : '译') }}
             </button>
           </div>
-          <button
-            v-if="msg.role === 'assistant' && !msg.isTemporary"
-            class="btn-translate"
-            :class="{ active: translations[msg.id] }"
-            :disabled="translatingId === msg.id"
-            @click="toggleTranslate(msg.id, msg.content)"
-            :title="translations[msg.id] ? '隐藏翻译' : '翻译成中文'"
-          >
-            {{ translatingId === msg.id ? '...' : (translations[msg.id] ? '隐藏' : '译') }}
-          </button>
           <!-- Translation result -->
           <div v-if="translations[msg.id]" class="translation">
             {{ translations[msg.id] }}
