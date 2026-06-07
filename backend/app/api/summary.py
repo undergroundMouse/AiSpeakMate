@@ -22,6 +22,7 @@ from ..schemas.summary import (
     PracticeSuggestion,
     TopPronunciationError,
     TopGrammarError,
+    VocabCoverage,
     UserProgressResponse,
     ProgressSnapshot,
     WeaknessRecord,
@@ -268,6 +269,39 @@ async def get_session_summary(
             severity=ge.severity or "medium",
         ))
 
+    # --- Vocab coverage ---
+    vocab_coverage = None
+    if session.scene_id:
+        from ..models.scene import SceneVocabulary
+        vocab_result = await db.execute(
+            select(SceneVocabulary.word).where(
+                SceneVocabulary.scene_id == session.scene_id
+            )
+        )
+        scene_words = [row[0].lower().strip() for row in vocab_result.all()]
+
+        # Collect all words used by the user in this session
+        user_texts = " ".join(
+            u.text for u in user_utterances
+        ).lower()
+        # Simple tokenization: split on non-alpha, keep words length >= 2
+        import re
+        used_tokens = set(re.findall(r"[a-zA-Z]{2,}", user_texts))
+
+        used_words = [w for w in scene_words if w in used_tokens]
+        unused_words = [w for w in scene_words if w not in used_tokens]
+        total = len(scene_words)
+        used_count = len(used_words)
+        pct = int(used_count / total * 100) if total > 0 else 0
+
+        vocab_coverage = VocabCoverage(
+            total_scene_words=total,
+            used_words=used_count,
+            coverage_pct=pct,
+            used_word_list=used_words[:20],  # limit output size
+            unused_word_list=unused_words[:20],
+        )
+
     return SessionSummaryResponse(
         id=summary.id,
         session_id=summary.session_id,
@@ -278,6 +312,7 @@ async def get_session_summary(
         top_pronunciation_errors=pronunciation_errors,
         top_grammar_errors=grammar_errors,
         practice_suggestions=summary.practice_suggestions or [],
+        vocab_coverage=vocab_coverage,
         share_image_url=summary.share_image_url,
         created_at=summary.created_at,
     )

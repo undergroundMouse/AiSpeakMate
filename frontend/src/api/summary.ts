@@ -39,6 +39,14 @@ export interface GrammarErrorItem {
   severity: string;
 }
 
+export interface VocabCoverage {
+  total_scene_words: number;
+  used_words: number;
+  coverage_pct: number;
+  used_word_list: string[];
+  unused_word_list: string[];
+}
+
 export interface SessionSummary {
   id: string;
   session_id: string;
@@ -49,6 +57,7 @@ export interface SessionSummary {
   top_pronunciation_errors: PronunciationErrorItem[];
   top_grammar_errors: GrammarErrorItem[];
   practice_suggestions: PracticeSuggestion[];
+  vocab_coverage: VocabCoverage | null;
   share_image_url: string | null;
   created_at: string;
 }

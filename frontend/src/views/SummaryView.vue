@@ -55,6 +55,27 @@
         </div>
       </div>
 
+      <!-- Vocab coverage -->
+      <div v-if="summary.vocab_coverage" class="section">
+        <h2>场景词汇覆盖</h2>
+        <div class="coverage-stats">
+          <span class="coverage-pct" :class="covClass">
+            {{ summary.vocab_coverage.coverage_pct }}%
+          </span>
+          <span class="coverage-detail">
+            {{ summary.vocab_coverage.used_words }} / {{ summary.vocab_coverage.total_scene_words }} 词
+          </span>
+        </div>
+        <div v-if="summary.vocab_coverage.unused_word_list?.length" class="unused-words">
+          <span class="unused-label">未使用的词汇：</span>
+          <span
+            v-for="(w, i) in summary.vocab_coverage.unused_word_list"
+            :key="i"
+            class="unused-tag"
+          >{{ w }}</span>
+        </div>
+      </div>
+
       <!-- Highlights -->
       <div v-if="summary.highlights?.length" class="section">
         <h2>会话亮点</h2>
@@ -135,7 +156,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import { summaryApi, type SessionSummary } from '@/api/summary';
@@ -159,6 +180,13 @@ function scoreBadgeClass(score: number): string {
   if (score >= 60) return 'score-yellow';
   return 'score-red';
 }
+
+const covClass = computed(() => {
+  const pct = summary.value?.vocab_coverage?.coverage_pct ?? 0;
+  if (pct >= 60) return 'cov-green';
+  if (pct >= 30) return 'cov-yellow';
+  return 'cov-red';
+});
 
 async function loadSummary() {
   const sessionId = route.params.sessionId as string;
@@ -268,6 +296,43 @@ onMounted(() => {
   font-weight: 400;
   color: var(--text-secondary);
   margin-left: 1px;
+}
+
+/* Vocab coverage */
+.coverage-stats {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.coverage-pct {
+  font-size: 2rem;
+  font-weight: 800;
+}
+.coverage-pct.cov-green { color: #4ade80; }
+.coverage-pct.cov-yellow { color: #fbbf24; }
+.coverage-pct.cov-red { color: #f87171; }
+.coverage-detail {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+.unused-words {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.unused-label {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  margin-right: 4px;
+}
+.unused-tag {
+  padding: 2px 10px;
+  border-radius: 20px;
+  background: rgba(248, 113, 113, 0.1);
+  color: #f87171;
+  font-size: 0.78rem;
 }
 
 /* Highlights & suggestions */

@@ -46,6 +46,15 @@ class TopGrammarError(BaseModel):
     severity: str = "medium"
 
 
+class VocabCoverage(BaseModel):
+    """Vocabulary usage stats for a session vs. its scene word bank."""
+    total_scene_words: int = 0
+    used_words: int = 0
+    coverage_pct: int = 0  # 0–100
+    used_word_list: list[str] = []
+    unused_word_list: list[str] = []
+
+
 class SessionSummaryResponse(BaseModel):
     id: uuid.UUID
     session_id: uuid.UUID
@@ -56,6 +65,7 @@ class SessionSummaryResponse(BaseModel):
     top_pronunciation_errors: list[TopPronunciationError] = []
     top_grammar_errors: list[TopGrammarError] = []
     practice_suggestions: list[PracticeSuggestion] = []
+    vocab_coverage: VocabCoverage | None = None
     share_image_url: str | None = None
     created_at: datetime
 
