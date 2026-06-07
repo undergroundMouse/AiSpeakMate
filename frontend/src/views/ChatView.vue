@@ -35,12 +35,18 @@
           </div>
         </div>
         <div class="panel-section" v-if="sceneDetail.sentence_patterns?.length">
-          <h4>常用句式</h4>
+          <h4>常用句式 (点击使用)</h4>
           <div class="panel-patterns">
-            <p v-for="(p, i) in sceneDetail.sentence_patterns" :key="i" class="panel-pattern">
-              {{ p.pattern }}<br>
-              <small v-if="p.translation">{{ p.translation }}</small>
-            </p>
+            <div v-for="(p, i) in sceneDetail.sentence_patterns" :key="i" class="panel-pattern-wrap">
+              <p class="panel-pattern" @click="usePattern(p.pattern)" title="点击填入输入框">
+                {{ p.pattern }}
+              </p>
+              <small v-if="p.translation" class="panel-pattern-trans">{{ p.translation }}</small>
+              <a class="panel-pattern-link"
+                :href="'https://www.baidu.com/s?wd=' + encodeURIComponent(p.pattern + ' 英语例句')"
+                target="_blank" rel="noopener"
+                title="搜索例句">🔗 例句</a>
+            </div>
           </div>
         </div>
       </div>
@@ -268,6 +274,10 @@ function sendText() {
   if (!text) return;
   chatStore.sendMessage(text);
   inputText.value = '';
+}
+
+function usePattern(pattern: string) {
+  inputText.value = pattern;
 }
 
 // --- Speech Recognition + Audio Capture (browser built-in) ---
@@ -559,15 +569,35 @@ onUnmounted(() => {
   color: var(--text-secondary);
   font-size: 0.7rem;
 }
-.panel-pattern {
-  font-size: 0.78rem;
-  color: var(--text-primary);
+.panel-pattern-wrap {
+  padding: 6px 8px;
+  background: var(--bg-primary);
+  border-radius: 6px;
   margin-bottom: 6px;
+  border-left: 2px solid var(--accent-primary);
+}
+.panel-pattern {
+  font-size: 0.82rem;
+  color: var(--text-primary);
+  margin-bottom: 2px;
   line-height: 1.4;
+  cursor: pointer;
+  font-weight: 500;
+  transition: color 0.15s;
 }
-.panel-pattern small {
+.panel-pattern:hover { color: var(--accent-primary); }
+.panel-pattern-trans {
   color: var(--text-secondary);
+  font-size: 0.72rem;
+  display: block;
 }
+.panel-pattern-link {
+  font-size: 0.68rem;
+  color: var(--accent-primary);
+  display: inline-block;
+  margin-top: 2px;
+}
+.panel-pattern-link:hover { text-decoration: underline; }
 
 .btn-end {
   padding: 6px 14px;
