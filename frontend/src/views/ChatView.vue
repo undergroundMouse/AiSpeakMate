@@ -188,6 +188,14 @@
               </span>
             </p>
           </div>
+          <!-- Phrases -->
+          <div v-if="dictData.phrases?.length" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--bg-card)">
+            <h4 style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:6px">常用短语</h4>
+            <div v-for="(phr, pi) in dictData.phrases" :key="pi" style="font-size:0.82rem;margin-bottom:4px;display:flex;gap:8px">
+              <span style="color:var(--accent-primary);min-width:100px">{{ phr.phrase }}</span>
+              <span style="color:var(--text-secondary)">{{ phr.meaning }}</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -312,19 +320,19 @@ async function lookupWord(word: string) {
   dictError.value = '';
   dictData.value = null;
   try {
-    const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`);
-    if (!res.ok) throw new Error('Word not found');
-    const data = await res.json();
-    const entry = data[0];
+    const res = await apiClient.get(`/dictionary/${encodeURIComponent(word)}`);
+    const data = res.data;
     dictData.value = {
-      phonetic: entry.phonetic || (entry.phonetics?.[0]?.text) || '',
-      meanings: entry.meanings?.slice(0, 5).map((m: any) => ({
+      phonetic: data.phonetic || '',
+      audio_url: data.audio_url || '',
+      meanings: data.meanings?.map((m: any) => ({
         partOfSpeech: m.partOfSpeech,
-        definitions: m.definitions?.slice(0, 3).map((d: any) => ({
+        definitions: m.definitions?.map((d: any) => ({
           definition: d.definition,
           example: d.example || '',
         })) || [],
       })) || [],
+      phrases: data.phrases || [],
     };
   } catch {
     dictError.value = `未找到 "${word}" 的释义`;
