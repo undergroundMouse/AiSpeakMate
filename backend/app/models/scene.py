@@ -46,6 +46,24 @@ class Scene(Base):
         back_populates="scene", cascade="all, delete-orphan"
     )
 
+    def get_difficulty_levels(self) -> list[str]:
+        """Return difficulty_levels as a list, handling both JSONB-decoded
+        lists and legacy double-encoded JSON strings."""
+        if self.difficulty_levels is None:
+            return []
+        if isinstance(self.difficulty_levels, list):
+            return self.difficulty_levels
+        return []
+
+    def get_tags(self) -> list[str]:
+        """Return tags as a list, handling both JSONB-decoded
+        lists and legacy double-encoded JSON strings."""
+        if self.tags is None:
+            return []
+        if isinstance(self.tags, list):
+            return self.tags
+        return []
+
 
 class SceneVocabulary(Base):
     __tablename__ = "scene_vocabulary"

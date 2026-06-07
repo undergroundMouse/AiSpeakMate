@@ -1,7 +1,5 @@
 """Seed data for initial app setup - English learning scenes."""
 
-import json
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -225,8 +223,8 @@ async def seed_scenes(db: AsyncSession) -> None:
                 thumbnail_url=sc_data.get("thumbnail_url"),
                 role_prompt=sc_data["role_prompt"],
                 opening_line=sc_data["opening_line"],
-                difficulty_levels=json.dumps(sc_data.get("difficulty_levels", ["beginner"])),
-                tags=json.dumps(sc_data.get("tags", [])),
+                difficulty_levels=sc_data.get("difficulty_levels", ["beginner"]),
+                tags=sc_data.get("tags", []),
                 suggested_duration=sc_data.get("suggested_duration", 300),
                 is_active=True,
             )
