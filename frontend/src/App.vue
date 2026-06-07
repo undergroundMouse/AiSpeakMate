@@ -7,14 +7,17 @@
         <!-- Settings button -->
         <button class="btn-sm btn-outline-sm" @click="showSettings = true" title="设置">⚙️</button>
 
-        <!-- Authenticated: user badge + logout -->
+        <!-- Authenticated: user badge with dropdown -->
         <template v-if="auth.isAuthenticated">
-          <div class="user-badge">
-            <div class="user-avatar">{{ auth.username.charAt(0).toUpperCase() }}</div>
-            <span>{{ auth.username }}</span>
+          <div class="user-dropdown" @click="showUserMenu = !showUserMenu" v-click-outside="() => showUserMenu = false">
+            <div class="user-badge" style="cursor:pointer">
+              <div class="user-avatar">{{ auth.username.charAt(0).toUpperCase() }}</div>
+              <span>{{ auth.username }} ▾</span>
+            </div>
+            <div v-if="showUserMenu" class="dropdown-menu">
+              <router-link to="/progress" class="dropdown-item" @click="showUserMenu=false">📊 学习进度</router-link>
+            </div>
           </div>
-          <router-link to="/progress" class="btn-sm btn-outline-sm">📊 进度</router-link>
-          <button class="btn-sm btn-outline-sm" @click="auth.logout()">退出</button>
         </template>
 
         <!-- Not authenticated: login button -->
@@ -86,6 +89,9 @@
           {{ v.label }}
         </div>
 
+        <div v-if="auth.isAuthenticated" style="margin-top:16px;padding-top:12px;border-top:1px solid var(--bg-card)">
+          <button class="btn-sm" style="width:100%;padding:8px;background:var(--accent-danger);color:#fff;border-radius:6px;font-weight:600" @click="auth.logout();showSettings=false">退出登录</button>
+        </div>
         <div class="modal-actions">
           <button class="btn-cancel" @click="showSettings=false">关闭</button>
           <button class="btn-confirm" @click="showSettings=false">完成</button>
@@ -130,6 +136,7 @@ async function doRegister() {
 
 // Settings
 const showSettings = ref(false);
+const showUserMenu = ref(false);
 
 // Theme
 const themes = [
