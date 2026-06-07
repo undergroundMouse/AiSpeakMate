@@ -135,6 +135,14 @@ async def end_session(
     session.duration_seconds = duration
     await db.commit()
 
+    # Generate progress snapshot and weakness records
+    from ..services.progress_service import (
+        generate_progress_snapshot,
+        update_weakness_records,
+    )
+    await generate_progress_snapshot(db, session.id)
+    await update_weakness_records(db, session.id)
+
     return EndSessionResponse(
         session_id=session.id,
         status=session.status,

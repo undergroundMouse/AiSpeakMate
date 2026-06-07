@@ -421,6 +421,14 @@ async def websocket_endpoint(websocket: WebSocket):
                     )
                     await db.commit()
 
+                    # Generate progress snapshot and weakness records
+                    from ..services.progress_service import (
+                        generate_progress_snapshot,
+                        update_weakness_records,
+                    )
+                    await generate_progress_snapshot(db, current_session_id)
+                    await update_weakness_records(db, current_session_id)
+
                 await websocket.send_json({
                     "type": "session_ended",
                     "payload": {
