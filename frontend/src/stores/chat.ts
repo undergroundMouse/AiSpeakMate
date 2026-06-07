@@ -111,6 +111,23 @@ export const useChatStore = defineStore('chat', () => {
         const payload = data.payload || {};
 
         switch (data.type) {
+          case 'tts_audio': {
+            // Play real TTS audio from server (Edge-TTS) if available
+            const payload = data.payload || {};
+            if (payload.audio_base64 && ttsEnabled.value) {
+              const binary = atob(payload.audio_base64);
+              const bytes = new Uint8Array(binary.length);
+              for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+              const blob = new Blob([bytes], { type: payload.audio_mime || 'audio/mp3' });
+              const url = URL.createObjectURL(blob);
+              const audio = new Audio(url);
+              audio.play().catch(() => {});
+              // Clean up blob URL after playback
+              audio.onended = () => URL.revokeObjectURL(url);
+            }
+            break;
+          }
+
           case 'session_started': {
             connectionStatus.value = { connected: true, connecting: false, error: null };
             // Sync session ID from server (in case server reused or created a new one)

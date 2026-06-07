@@ -810,10 +810,30 @@ async def _process_user_message(
             },
         })
 
-    # generate LLM response with grammar feedback
+    # generate LLM response — try Groq first, fall back to simulated
     data = await _get_session_data(db, current_session_id)
     scene_data = data["scene_data"] if data else None
-    ai_text = _simulate_llm_response(asr_text, scene_data)
+    session_obj = data["session"] if data else None
+
+    # Build conversation history for Groq
+    history = []
+    if session_obj:
+        utt_result = await db.execute(
+            select(Utterance)
+            .where(Utterance.session_id == current_session_id)
+            .order_by(Utterance.sequence)
+        )
+        for u in utt_result.scalars().all():
+            history.append({"role": u.speaker, "content": u.text})
+
+    # Try Groq LLM
+    system_prompt = scene_data.get("role_prompt", "") if scene_data else ""
+    from ..services.llm_service import generate_response
+    ai_text = await generate_response(asr_text, system_prompt, history)
+
+    # Fall back to simulated response if Groq unavailable
+    if not ai_text:
+        ai_text = _simulate_llm_response(asr_text, scene_data)
 
     ai_utt = await _store_utterance(current_session_id, "ai", ai_text, sequence_counter + 2)
 
@@ -829,14 +849,31 @@ async def _process_user_message(
         },
     })
 
-    # TTS audio stub
-    await websocket.send_json({
-        "type": "tts_audio",
-        "payload": {
-            "session_id": str(current_session_id),
-            "stream_id": f"tts_{resp_id}",
-            "interrupt_id": resp_id,
-            "is_end": True,
-            "text": ai_text,
-        },
-    })
+    # TTS audio — generate real audio via Edge-TTS
+    from ..services.tts_service import text_to_speech_base64
+    tts_base64 = await text_to_speech_base64(ai_text)
+    if tts_base64:
+        await websocket.send_json({
+            "type": "tts_audio",
+            "payload": {
+                "session_id": str(current_session_id),
+                "stream_id": f"tts_{resp_id}",
+                "interrupt_id": resp_id,
+                "is_end": True,
+                "text": ai_text,
+                "audio_base64": tts_base64,
+                "audio_mime": "audio/mp3",
+            },
+        })
+    else:
+        # Fallback: stub without audio
+        await websocket.send_json({
+            "type": "tts_audio",
+            "payload": {
+                "session_id": str(current_session_id),
+                "stream_id": f"tts_{resp_id}",
+                "interrupt_id": resp_id,
+                "is_end": True,
+                "text": ai_text,
+            },
+        })
