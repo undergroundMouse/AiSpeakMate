@@ -14,9 +14,14 @@ export interface LoginRequest {
 export interface AuthResponse {
   access_token: string;
   token_type: string;
-  user_id: string;
-  username: string;
-  email: string;
+  user: {
+    id: string;
+    username: string;
+    email: string;
+    native_language: string;
+    learning_language: string;
+    level: string;
+  };
 }
 
 export const authApi = {
