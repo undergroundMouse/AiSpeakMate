@@ -128,47 +128,62 @@ async def _store_grammar_errors(
     lower = text.strip().lower()
 
     patterns = [
-        {
-            "trigger": "i go to",
-            "check": lambda t: "i go to" in t and "yesterday" in t,
-            "error_type": "tense",
-            "match": "i go to",
-            "correction": "I went to",
-            "explanation": "应使用过去时 'went'",
-            "severity": "medium",
-        },
-        {
-            "trigger": "he go",
-            "check": lambda t: "he go" in t and "he goes" not in t,
-            "error_type": "subject-verb agreement",
-            "match": "he go",
-            "correction": "he goes",
-            "explanation": "主语 he 为第三人称单数，动词需用 goes",
-            "severity": "medium",
-        },
-        {
-            "trigger": "i has",
-            "check": lambda t: "i has" in t,
-            "error_type": "subject-verb agreement",
-            "match": "i has",
-            "correction": "I have",
-            "explanation": "第一人称应使用 'have' 而非 'has'",
-            "severity": "low",
-        },
-        {
-            "trigger": "two apple",
-            "check": lambda t: "two apple" in t,
-            "error_type": "plural",
-            "match": "two apple",
-            "correction": "two apples",
-            "explanation": "'two' 后应使用复数形式 'apples'",
-            "severity": "medium",
-        },
+        # Tense errors
+        {"trigger": "i go to", "check": lambda t: "i go to" in t and "yesterday" in t, "error_type": "tense", "match": "i go to", "correction": "I went to", "explanation": "应使用过去时 'went'", "severity": "medium"},
+        {"trigger": "i go", "check": lambda t: "i go" in t and "yesterday" in t, "error_type": "tense", "match": "i go", "correction": "I went", "explanation": "过去时应该用 'went'", "severity": "medium"},
+        {"trigger": "yesterday i go", "check": lambda t: "yesterday" in t and "i go" in t, "error_type": "tense", "match": "i go", "correction": "I went", "explanation": "'yesterday' 表示过去，应使用 'went'", "severity": "medium"},
+        # Subject-verb agreement
+        {"trigger": "he go", "check": lambda t: "he go" in t and "he goes" not in t, "error_type": "subject-verb agreement", "match": "he go", "correction": "he goes", "explanation": "主语 he 为第三人称单数，动词需用 goes", "severity": "medium"},
+        {"trigger": "she go", "check": lambda t: "she go" in t and "she goes" not in t, "error_type": "subject-verb agreement", "match": "she go", "correction": "she goes", "explanation": "第三人称单数动词需加 -es", "severity": "medium"},
+        {"trigger": "it go", "check": lambda t: "it go" in t and "it goes" not in t, "error_type": "subject-verb agreement", "match": "it go", "correction": "it goes", "explanation": "第三人称单数动词需加 -es", "severity": "medium"},
+        {"trigger": "i has", "check": lambda t: "i has" in t, "error_type": "subject-verb agreement", "match": "i has", "correction": "I have", "explanation": "第一人称应使用 'have' 而非 'has'", "severity": "low"},
+        {"trigger": "they has", "check": lambda t: "they has" in t, "error_type": "subject-verb agreement", "match": "they has", "correction": "they have", "explanation": "they 后应使用 'have'", "severity": "low"},
+        {"trigger": "we has", "check": lambda t: "we has" in t, "error_type": "subject-verb agreement", "match": "we has", "correction": "we have", "explanation": "we 后应使用 'have'", "severity": "low"},
+        {"trigger": "you has", "check": lambda t: "you has" in t, "error_type": "subject-verb agreement", "match": "you has", "correction": "you have", "explanation": "you 后应使用 'have'", "severity": "low"},
+        {"trigger": "he have", "check": lambda t: "he have" in t, "error_type": "subject-verb agreement", "match": "he have", "correction": "he has", "explanation": "第三人称单数应使用 'has'", "severity": "low"},
+        {"trigger": "she have", "check": lambda t: "she have" in t, "error_type": "subject-verb agreement", "match": "she have", "correction": "she has", "explanation": "第三人称单数应使用 'has'", "severity": "low"},
+        # Plural errors
+        {"trigger": "two apple", "check": lambda t: "two apple" in t and "two apples" not in t, "error_type": "plural", "match": "two apple", "correction": "two apples", "explanation": "数量词后应使用复数形式", "severity": "medium"},
+        {"trigger": "three book", "check": lambda t: "three book" in t and "three books" not in t, "error_type": "plural", "match": "three book", "correction": "three books", "explanation": "数量词后应使用复数形式", "severity": "medium"},
+        {"trigger": "some apple", "check": lambda t: "some apple" in t and "some apples" not in t, "error_type": "plural", "match": "some apple", "correction": "some apples", "explanation": "'some' 后应用复数", "severity": "low"},
+        {"trigger": "many book", "check": lambda t: "many book" in t and "many books" not in t, "error_type": "plural", "match": "many book", "correction": "many books", "explanation": "'many' 后应用复数", "severity": "low"},
+        # Article errors
+        {"trigger": "a apple", "check": lambda t: "a apple" in t, "error_type": "article", "match": "a apple", "correction": "an apple", "explanation": "元音前应使用 'an' 而非 'a'", "severity": "low"},
+        {"trigger": "a orange", "check": lambda t: "a orange" in t, "error_type": "article", "match": "a orange", "correction": "an orange", "explanation": "元音前应使用 'an' 而非 'a'", "severity": "low"},
+        {"trigger": "a egg", "check": lambda t: "a egg" in t, "error_type": "article", "match": "a egg", "correction": "an egg", "explanation": "元音前应使用 'an' 而非 'a'", "severity": "low"},
+        # Preposition errors
+        {"trigger": "go to home", "check": lambda t: "go to home" in t, "error_type": "preposition", "match": "go to home", "correction": "go home", "explanation": "'go home' 不需加 'to'", "severity": "low"},
+        {"trigger": "go to there", "check": lambda t: "go to there" in t, "error_type": "preposition", "match": "go to there", "correction": "go there", "explanation": "'go there' 不需加 'to'", "severity": "low"},
+        # Word order
+        {"trigger": "i very like", "check": lambda t: "i very like" in t, "error_type": "word order", "match": "i very like", "correction": "I really like", "explanation": "中式英语，用 'really like' 替代 'very like'", "severity": "medium"},
+        # Double negatives
+        {"trigger": "don't have no", "check": lambda t: "don't have no" in t or "dont have no" in t, "error_type": "double negative", "match": "don't have no", "correction": "don't have any", "explanation": "双重否定，应用 'any' 替代 'no'", "severity": "medium"},
+        # Missing 'to' in infinitive
+        {"trigger": "i want go", "check": lambda t: "i want go" in t and "i want to go" not in t, "error_type": "infinitive", "match": "i want go", "correction": "I want to go", "explanation": "'want' 后需加 'to' + 动词原形", "severity": "medium"},
+        # Common misspellings
+        {"trigger": "tommorrow", "check": lambda t: "tommorrow" in t, "error_type": "spelling", "match": "tommorrow", "correction": "tomorrow", "explanation": "拼写应为 'tomorrow'", "severity": "low"},
+        {"trigger": "becuase", "check": lambda t: "becuase" in t, "error_type": "spelling", "match": "becuase", "correction": "because", "explanation": "拼写应为 'because'", "severity": "low"},
     ]
+
+    # Helper: check word boundary
+    def _word_match(text: str, phrase: str) -> bool:
+        idx = text.find(phrase)
+        if idx < 0:
+            return False
+        # Check character before match (if any) is not a letter
+        if idx > 0 and text[idx - 1].isalpha():
+            return False
+        # Check character after match (if any) is not a letter
+        end = idx + len(phrase)
+        if end < len(text) and text[end].isalpha():
+            return False
+        return True
 
     for p in patterns:
         if p["check"](lower):
             idx = lower.find(p["match"])
+            if not _word_match(lower, p["match"]):
+                continue
             if idx >= 0:
                 match_len = len(p["match"])
                 corrected_sentence = text[:idx] + p["correction"] + text[idx + match_len:]
@@ -649,10 +664,18 @@ async def websocket_endpoint(websocket: WebSocket):
                     if not asr_text and audio_base64:
                         asr_text = _simulate_asr_from_audio()
                     if asr_text:
-                        await _process_user_message(
-                            websocket, db, current_session_id, asr_text, sequence_counter
-                        )
-                        sequence_counter += 2
+                        try:
+                            await _process_user_message(
+                                websocket, db, current_session_id, asr_text, sequence_counter
+                            )
+                            sequence_counter += 2
+                        except Exception as e:
+                            import traceback
+                            traceback.print_exc()
+                            await websocket.send_json({
+                                "type": "error",
+                                "payload": {"code": 2001, "message": f"Internal error: {e}"},
+                            })
 
             # --- USER MESSAGE (text-only, no audio) ---
             elif msg_type == "user_message":
@@ -665,10 +688,18 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 text = (payload.get("text") or "").strip()
                 if text:
-                    await _process_user_message(
-                        websocket, db, current_session_id, text, sequence_counter
-                    )
-                    sequence_counter += 2
+                    try:
+                        await _process_user_message(
+                            websocket, db, current_session_id, text, sequence_counter
+                        )
+                        sequence_counter += 2
+                    except Exception as e:
+                        import traceback
+                        traceback.print_exc()
+                        await websocket.send_json({
+                            "type": "error",
+                            "payload": {"code": 2001, "message": f"Internal error: {e}"},
+                        })
 
             # --- INTERRUPT ---
             elif msg_type == "interrupt":
