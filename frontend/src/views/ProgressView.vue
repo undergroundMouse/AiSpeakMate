@@ -1,7 +1,7 @@
 <template>
   <div class="progress-view">
     <header class="page-header">
-      <router-link to="/scenes" class="back-link">&larr; 场景列表</router-link>
+      <router-link to="/" class="back-link">&larr; 首页</router-link>
       <h1>学习进度</h1>
       <div v-if="progress" class="rating-badge" :class="ratingClass">
         {{ progress.overall_rating }}

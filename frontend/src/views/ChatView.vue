@@ -2,7 +2,7 @@
   <div class="chat-view">
     <!-- Connection status bar -->
     <header class="chat-header">
-      <router-link to="/scenes" class="back-link">&larr; 场景列表</router-link>
+      <router-link to="/" class="back-link">&larr; 首页</router-link>
       <div class="connection-badge" :class="statusClass">
         <span class="dot"></span>
         {{ statusText }}

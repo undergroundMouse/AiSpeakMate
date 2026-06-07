@@ -1,7 +1,7 @@
 <template>
   <div class="scene-detail">
     <header class="page-header">
-      <router-link to="/scenes" class="back-link">&larr; 返回场景列表</router-link>
+      <router-link to="/" class="back-link">&larr; 首页</router-link>
     </header>
 
     <!-- Loading -->

@@ -9,11 +9,6 @@ const router = createRouter({
       component: () => import('@/views/HomeView.vue'),
     },
     {
-      path: '/scenes',
-      name: 'scenes',
-      component: () => import('@/views/SceneListView.vue'),
-    },
-    {
       path: '/scenes/:id',
       name: 'scene-detail',
       component: () => import('@/views/SceneDetailView.vue'),

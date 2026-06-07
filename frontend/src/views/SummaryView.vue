@@ -1,7 +1,7 @@
 <template>
   <div class="summary-view">
     <header class="page-header">
-      <router-link to="/scenes" class="back-link">&larr; 场景列表</router-link>
+      <router-link to="/" class="back-link">&larr; 场景列表</router-link>
       <h1>对话总结</h1>
     </header>
 
@@ -127,7 +127,7 @@
       </div>
 
       <div class="actions">
-        <router-link to="/scenes" class="btn btn-primary">继续练习</router-link>
+        <router-link to="/" class="btn btn-primary">继续练习</router-link>
         <router-link to="/progress" class="btn btn-secondary">查看进度</router-link>
       </div>
     </div>
