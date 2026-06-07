@@ -150,11 +150,15 @@ function sendText() {
   inputText.value = '';
 }
 
-// --- Audio recording ---
+// --- Speech Recognition (browser built-in) ---
 const isRecording = ref(false);
 const recordingDuration = ref(0);
-let mediaRecorder: MediaRecorder | null = null;
+let recognition: any = null;
 let recordingTimer: ReturnType<typeof setInterval> | null = null;
+
+// Check for browser SpeechRecognition support
+const SpeechRecognitionAPI =
+  (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
 async function toggleRecording() {
   if (isRecording.value) {
@@ -165,50 +169,100 @@ async function toggleRecording() {
 }
 
 async function startRecording() {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-    const chunks: BlobPart[] = [];
+  if (SpeechRecognitionAPI) {
+    // Use browser's built-in speech recognition for accurate ASR
+    try {
+      recognition = new SpeechRecognitionAPI();
+      recognition.lang = 'en-US';
+      recognition.interimResults = false;
+      recognition.continuous = false;
+      recognition.maxAlternatives = 1;
 
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunks.push(e.data);
-    };
+      recognition.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        if (transcript) {
+          // Show temporary message first
+          chatStore.addTemporaryMessage('user', transcript);
+          // Send recognized text as normal user_message
+          chatStore.sendMessage(transcript);
+        }
+        resetRecordingState();
+      };
 
-    mediaRecorder.onstop = () => {
-      // Stop all tracks to release microphone
-      stream.getTracks().forEach((t) => t.stop());
-      // Send recorded audio via WebSocket
-      if (chunks.length > 0) {
-        const audioBlob = new Blob(chunks, { type: 'audio/webm' });
-        chatStore.sendAudio(audioBlob);
-      }
-      // Reset recording state
-      isRecording.value = false;
-      chatStore.isRecording = false;
+      recognition.onerror = (event: any) => {
+        console.error('Speech recognition error:', event.error);
+        // Fallback: send audio via WebSocket
+        chatStore.sendAudio(new Blob(['voice'], { type: 'audio/webm' }));
+        resetRecordingState();
+      };
+
+      recognition.onend = () => {
+        resetRecordingState();
+      };
+
+      recognition.start();
+      isRecording.value = true;
+
       recordingDuration.value = 0;
-      if (recordingTimer) {
-        clearInterval(recordingTimer);
-        recordingTimer = null;
-      }
-    };
+      recordingTimer = setInterval(() => {
+        recordingDuration.value++;
+      }, 1000);
+    } catch (err) {
+      console.error('Speech recognition start failed:', err);
+      isRecording.value = false;
+    }
+  } else {
+    // Fallback for browsers without SpeechRecognition: use audio recording
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      const chunks: BlobPart[] = [];
 
-    mediaRecorder.start(250); // Collect data every 250ms
-    isRecording.value = true;
-    chatStore.isRecording = true;
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
 
-    // Start duration timer
-    recordingDuration.value = 0;
-    recordingTimer = setInterval(() => {
-      recordingDuration.value++;
-    }, 1000);
-  } catch (err) {
-    console.error('Failed to start recording:', err);
+      mediaRecorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        if (chunks.length > 0) {
+          chatStore.sendAudio(new Blob(chunks, { type: 'audio/webm' }));
+        }
+        resetRecordingState();
+      };
+
+      mediaRecorder.start(250);
+      isRecording.value = true;
+
+      recordingDuration.value = 0;
+      recordingTimer = setInterval(() => {
+        recordingDuration.value++;
+      }, 1000);
+
+      // Store for stopRecording
+      (window as any).__fallbackRecorder = mediaRecorder;
+    } catch (err) {
+      console.error('Failed to start recording:', err);
+    }
+  }
+}
+
+function resetRecordingState() {
+  isRecording.value = false;
+  recordingDuration.value = 0;
+  if (recordingTimer) {
+    clearInterval(recordingTimer);
+    recordingTimer = null;
   }
 }
 
 function stopRecording() {
-  if (mediaRecorder && mediaRecorder.state === 'recording') {
-    mediaRecorder.stop();
+  if (recognition) {
+    recognition.stop();
+    recognition = null;
+  } else if ((window as any).__fallbackRecorder) {
+    const mr = (window as any).__fallbackRecorder;
+    if (mr.state === 'recording') mr.stop();
+    (window as any).__fallbackRecorder = null;
   }
 }
 
@@ -228,10 +282,8 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
-  // Stop recording if active when leaving
-  if (mediaRecorder && mediaRecorder.state === 'recording') {
-    mediaRecorder.stop();
-  }
+  // Stop speech recognition or recording if active
+  stopRecording();
   // Don't disconnect on unmount if user is navigating to summary
   // chatStore.disconnect();
 });

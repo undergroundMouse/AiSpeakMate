@@ -245,6 +245,16 @@ export const useChatStore = defineStore('chat', () => {
     ws.send(audioBlob);
   }
 
+  function addTemporaryMessage(role: 'user' | 'assistant', content: string) {
+    messages.value.push({
+      id: `${role}-${++messageIdCounter}`,
+      role,
+      content,
+      timestamp: new Date().toISOString(),
+      isTemporary: true,
+    });
+  }
+
   function clearMessages() {
     messages.value = [];
   }
@@ -260,6 +270,8 @@ export const useChatStore = defineStore('chat', () => {
     disconnect,
     sendMessage,
     sendAudio,
+    addTemporaryMessage,
+    sendEndSession,
     clearMessages,
   };
 });
