@@ -202,6 +202,19 @@ export const useChatStore = defineStore('chat', () => {
     };
   }
 
+  function sendEndSession() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'end_session',
+        payload: {
+          session_id: currentSessionId.value,
+        },
+      }));
+      // Don't disconnect immediately — server needs time to process
+      // The session_ended handler will call disconnect()
+    }
+  }
+
   function disconnect() {
     ws?.close();
     ws = null;
@@ -241,8 +254,37 @@ export const useChatStore = defineStore('chat', () => {
       connectionStatus.value.error = 'Not connected to chat server';
       return;
     }
-    // Send audio as binary
-    ws.send(audioBlob);
+
+    // Show temporary user message while ASR is processing
+    const tempId = `user-${++messageIdCounter}`;
+    messages.value.push({
+      id: tempId,
+      role: 'user',
+      content: '🎤 语音识别中...',
+      timestamp: new Date().toISOString(),
+      isTemporary: true,
+    });
+
+    // Convert audio to base64 and send as JSON metadata frame
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(',')[1]; // strip data:... prefix
+      ws!.send(JSON.stringify({
+        type: 'audio_data',
+        payload: {
+          session_id: currentSessionId.value,
+          audio_base64: base64,
+          audio_mime: audioBlob.type || 'audio/webm',
+          is_end: true,
+        },
+      }));
+    };
+    reader.onerror = () => {
+      // Remove temporary message on error
+      messages.value = messages.value.filter(m => m.id !== tempId);
+      connectionStatus.value.error = 'Failed to read audio data';
+    };
+    reader.readAsDataURL(audioBlob);
   }
 
   function clearMessages() {
@@ -260,6 +302,7 @@ export const useChatStore = defineStore('chat', () => {
     disconnect,
     sendMessage,
     sendAudio,
+    sendEndSession,
     clearMessages,
   };
 });

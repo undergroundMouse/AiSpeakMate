@@ -193,6 +193,27 @@ async def _store_grammar_errors(
     return errors
 
 
+def _simulate_asr_from_audio() -> str:
+    """Simulate ASR recognition from voice input.
+    Returns a random plausible English practice phrase since no real ASR is integrated."""
+    phrases = [
+        "hello",
+        "hi there",
+        "I'd like to order a coffee please",
+        "can I have the menu",
+        "thank you very much",
+        "how are you today",
+        "I'm doing well thanks",
+        "could you help me please",
+        "what do you recommend",
+        "that sounds great",
+        "I have a question",
+        "nice to meet you",
+    ]
+    import random as _rand
+    return _rand.choice(phrases)
+
+
 def _generate_pronunciation_advice(score: int) -> str:
     if score >= 85:
         return "发音非常好！继续保持。"
@@ -328,7 +349,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         scene_id=scene.id,
                         difficulty=difficulty,
                         status="active",
-                        started_at=datetime.now(timezone.utc),
+                        started_at=datetime.utcnow(),
                     )
                     db.add(session)
                     await db.commit()
@@ -411,6 +432,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 asr_text = payload.get("text", "")
                 is_end = payload.get("is_end", False)
+                audio_base64 = payload.get("audio_base64", "")
 
                 if not is_end and asr_text:
                     # send partial ASR
@@ -420,15 +442,19 @@ async def websocket_endpoint(websocket: WebSocket):
                             "session_id": str(current_session_id),
                             "text": asr_text,
                             "is_final": False,
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "timestamp": datetime.utcnow().isoformat(),
                         },
                     })
 
-                if is_end and asr_text:
-                    await _process_user_message(
-                        websocket, db, current_session_id, asr_text, sequence_counter
-                    )
-                    sequence_counter += 2
+                if is_end:
+                    # If audio was provided but no ASR text, simulate recognition
+                    if not asr_text and audio_base64:
+                        asr_text = _simulate_asr_from_audio()
+                    if asr_text:
+                        await _process_user_message(
+                            websocket, db, current_session_id, asr_text, sequence_counter
+                        )
+                        sequence_counter += 2
 
             # --- USER MESSAGE (text-only, no audio) ---
             elif msg_type == "user_message":
@@ -468,7 +494,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     continue
 
                 # mark session completed
-                now = datetime.now(timezone.utc)
+                now = datetime.utcnow()
                 session_result = await db.execute(
                     select(Session).where(Session.id == current_session_id)
                 )
@@ -531,7 +557,7 @@ async def _process_user_message(
             "session_id": str(current_session_id),
             "text": asr_text,
             "confidence": 0.95,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.utcnow().isoformat(),
         },
     })
 

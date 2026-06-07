@@ -2,8 +2,8 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import ForeignKey, SmallInteger, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import ForeignKey, JSON, SmallInteger, Text
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -31,8 +31,8 @@ class SessionSummary(Base):
     radar_interaction: Mapped[Optional[int]] = mapped_column(
         SmallInteger, nullable=True
     )
-    highlights: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
-    practice_suggestions: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+    highlights: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    practice_suggestions: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     share_image_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.utcnow())
 

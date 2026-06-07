@@ -213,8 +213,12 @@ function stopRecording() {
 }
 
 async function endSession() {
-  chatStore.disconnect();
   const sessionId = route.params.sessionId as string;
+  // Send end_session message to server before disconnecting
+  if (chatStore.currentSessionId) {
+    chatStore.sendEndSession();
+  }
+  // Navigate to summary — the server will mark session complete
   router.push(`/summary/${sessionId}`);
 }
 
