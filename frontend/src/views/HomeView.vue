@@ -319,8 +319,8 @@ onMounted(() => {
           topic: s.topic,
           role_prompt: s.role_prompt || '',
           opening_line: s.opening_line || '',
-          vocab_list: [],
-          sentence_patterns: [],
+          vocab_list: s.vocab_list || [],
+          sentence_patterns: s.sentence_patterns || [],
         },
       }));
       saveCustomScenes(customScenes.value);

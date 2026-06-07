@@ -145,17 +145,39 @@ async def list_custom_scenes(
         .limit(20)
     )
     scenes = result.scalars().all()
-    return [
-        {
+    output = []
+    for s in scenes:
+        # Try to parse stored AI data from prompt_snapshot
+        role_prompt = ""
+        opening_line = ""
+        vocab_list = []
+        sentence_patterns = []
+        if s.prompt_snapshot:
+            try:
+                import json as _json3
+                data = _json3.loads(s.prompt_snapshot)
+                role_prompt = data.get("role_prompt", "")
+                opening_line = data.get("opening_line", "")
+                vocab_list = data.get("vocab_list", [])
+                sentence_patterns = data.get("sentence_patterns", [])
+            except Exception:
+                role_prompt = s.prompt_snapshot
+        if not role_prompt:
+            role_prompt = f"You are {s.role or 'a conversation partner'}. Topic: {s.topic}."
+        if not opening_line:
+            opening_line = f"Let's talk about {s.topic}. What do you think?"
+
+        output.append({
             "custom_scene_id": str(s.id),
             "topic": s.topic,
-            "role_prompt": s.prompt_snapshot or f"You are {s.role or 'a conversation partner'}. Topic: {s.topic}.",
-            "opening_line": f"Let's talk about {s.topic}. What do you think?",
+            "role_prompt": role_prompt,
+            "opening_line": opening_line,
+            "vocab_list": vocab_list,
+            "sentence_patterns": sentence_patterns,
             "difficulty": s.difficulty or "intermediate",
             "created_at": s.created_at.isoformat() if s.created_at else None,
-        }
-        for s in scenes
-    ]
+        })
+    return output
 
 
 @router.get("/{scene_id}", response_model=SceneDetail)
@@ -289,9 +311,20 @@ Return ONLY a JSON object with these fields (no markdown, no explanation):
     except Exception as e:
         print(f"AI scene generation failed: {e}")
 
-    # Save AI-generated prompt to DB
+    # Save ALL AI-generated data to DB as JSON bundle
     if role_prompt:
-        custom.prompt_snapshot = role_prompt
+        import json as _json2
+        custom.prompt_snapshot = _json2.dumps({
+            "role_prompt": role_prompt,
+            "opening_line": opening_line,
+            "vocab_list": vocab_list,
+            "sentence_patterns": pattern_list,
+        }, ensure_ascii=False)
+        # Also save vocab and patterns to existing JSONB columns
+        if vocab_list:
+            custom.focus_vocab = [v["word"] for v in vocab_list if v.get("word")]
+        if pattern_list:
+            custom.focus_grammar = [p["pattern"] for p in pattern_list if p.get("pattern")]
         await db.commit()
 
     # Fallback if AI failed
