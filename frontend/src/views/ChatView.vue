@@ -26,9 +26,12 @@
         <div class="panel-section" v-if="sceneDetail.vocab_list?.length">
           <h4>核心词汇</h4>
           <div class="panel-vocab">
-            <span v-for="v in sceneDetail.vocab_list" :key="v.word" class="panel-word">
+            <a v-for="v in sceneDetail.vocab_list" :key="v.word" class="panel-word"
+              :href="'https://www.baidu.com/s?wd=' + encodeURIComponent(v.word + ' 英语')"
+              target="_blank" rel="noopener"
+              :title="'百度搜索: ' + v.word">
               {{ v.word }}<small v-if="v.translation"> ({{ v.translation }})</small>
-            </span>
+            </a>
           </div>
         </div>
         <div class="panel-section" v-if="sceneDetail.sentence_patterns?.length">
@@ -74,6 +77,13 @@
               :title="'播放我的录音'"
               @click="chatStore.playMessageAudio(msg)"
             >🔊</button>
+            <!-- Pause/Resume AI speech -->
+            <button
+              v-if="msg.role === 'assistant' && !msg.isTemporary"
+              class="btn-speaker"
+              :title="isPaused ? '继续播放' : '暂停播放'"
+              @click="togglePause()"
+            >{{ isPaused ? '▶' : '⏸' }}</button>
             <!-- Translate button for AI and user messages -->
             <button
               v-if="!msg.isTemporary"
@@ -179,6 +189,17 @@ const inputText = ref('');
 const messagesContainer = ref<HTMLElement | null>(null);
 const showSceneInfo = ref(false);
 const sceneDetail = ref<any>(null);
+const isPaused = ref(false);
+
+function togglePause() {
+  if (isPaused.value) {
+    window.speechSynthesis.resume();
+    isPaused.value = false;
+  } else {
+    window.speechSynthesis.pause();
+    isPaused.value = true;
+  }
+}
 import { sceneApi } from '@/api/scene';
 
 // Translation state
@@ -531,6 +552,13 @@ onUnmounted(() => {
   background: var(--bg-card);
   font-size: 0.78rem;
   color: var(--text-primary);
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.panel-word:hover {
+  background: var(--accent-primary);
+  color: #0f172a;
 }
 .panel-word small {
   color: var(--text-secondary);
