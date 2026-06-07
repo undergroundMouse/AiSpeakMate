@@ -105,6 +105,13 @@
               :title="chatStore.isPaused ? '继续播放' : '暂停播放'"
               @click="chatStore.togglePause()"
             >{{ chatStore.isPaused ? '▶' : '⏸' }}</button>
+            <!-- Speed control -->
+            <button
+              v-if="!msg.isTemporary"
+              class="btn-speaker btn-speed"
+              :title="'播放速度: ' + speedLabel"
+              @click="cycleSpeed()"
+            >{{ speedLabel }}</button>
             <!-- Translate button for AI and user messages -->
             <button
               v-if="!msg.isTemporary"
@@ -258,6 +265,15 @@ import { sceneApi } from '@/api/scene';
 const translations = ref<Record<string, string>>({});
 const translatingId = ref<string | null>(null);
 import apiClient from '@/api/client';
+
+// Speed control
+const speeds = [0.75, 0.9, 1.0, 1.25, 1.5];
+const speedIdx = ref(1); // default 0.9x (learner-friendly)
+const speedLabel = computed(() => speeds[speedIdx.value] + 'x');
+function cycleSpeed() {
+  speedIdx.value = (speedIdx.value + 1) % speeds.length;
+  chatStore.setPlaybackSpeed(speeds[speedIdx.value]);
+}
 
 function replayAiAudio(msg: any) {
   // Play stored Edge-TTS audio if available, fallback to SpeechSynthesis
@@ -785,6 +801,19 @@ onUnmounted(() => {
 .btn-speaker:hover {
   background: var(--accent-success);
   color: #0f172a;
+}
+.btn-speed {
+  width: auto;
+  padding: 0 6px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  min-width: 28px;
+  background: rgba(168,85,247,0.15);
+  color: #a855f7;
+}
+.btn-speed:hover {
+  background: #a855f7;
+  color: #fff;
 }
 .message-row.user .btn-speaker {
   background: rgba(0,0,0,0.15);

@@ -44,6 +44,14 @@ export const useChatStore = defineStore('chat', () => {
   let messageIdCounter = 0;
   let currentInterruptId: string | null = null;
   let currentAudio: HTMLAudioElement | null = null;
+  let playbackSpeed = 0.9;
+
+  function setPlaybackSpeed(speed: number) {
+    playbackSpeed = speed;
+    if (currentAudio) {
+      currentAudio.playbackRate = speed;
+    }
+  }
 
   // --- TTS (Speech Synthesis) ---
   function _getTtsVoiceName(): string {
@@ -72,6 +80,7 @@ export const useChatStore = defineStore('chat', () => {
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = voiceName.startsWith('en-GB') ? 'en-GB' : 'en-US';
     utterance.rate = 0.9;
+    utterance.rate = playbackSpeed;
     utterance.pitch = 1.0;
 
     // Match browser voice to selected Edge-TTS voice
@@ -187,6 +196,7 @@ export const useChatStore = defineStore('chat', () => {
               const blob = new Blob([bytes], { type: payload.audio_mime || 'audio/mp3' });
               const url = URL.createObjectURL(blob);
               const audio = new Audio(url);
+              audio.playbackRate = playbackSpeed;
               currentAudio = audio;
               isPaused.value = false;
               // Store audio URL on the last AI message for replay
@@ -477,6 +487,7 @@ export const useChatStore = defineStore('chat', () => {
     pauseAudio,
     resumeAudio,
     togglePause,
+    setPlaybackSpeed,
     toggleTts,
     addTemporaryMessage,
     sendEndSession,
