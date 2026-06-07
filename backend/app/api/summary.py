@@ -142,6 +142,10 @@ async def get_session_summary(
     Get the summary report for a completed session.
     Returns radar chart scores, highlights, and practice suggestions.
     """
+    from ..models.evaluation import PronunciationEvaluation, GrammarError
+    from ..models.session import Utterance
+    from ..models.scene import Scene
+
     # Verify session exists and belongs to user
     result = await db.execute(
         select(Session).where(
@@ -153,6 +157,43 @@ async def get_session_summary(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    # Get scene name
+    scene_name = None
+    if session.scene_id:
+        scene_result = await db.execute(
+            select(Scene.name).where(Scene.id == session.scene_id)
+        )
+        scene_name = scene_result.scalar_one_or_none()
+    duration_seconds = session.duration_seconds or 0
+
+    # Gather evaluation data for real score computation
+    user_utterances_result = await db.execute(
+        select(Utterance).where(
+            Utterance.session_id == session_id,
+            Utterance.speaker == "user",
+        )
+    )
+    user_utterances = user_utterances_result.scalars().all()
+
+    # Compute aggregate pronunciation score from evaluations
+    pron_eval_q = await db.execute(
+        select(PronunciationEvaluation)
+        .join(Utterance, Utterance.id == PronunciationEvaluation.utterance_id)
+        .where(Utterance.session_id == session_id)
+    )
+    pron_evals = pron_eval_q.scalars().all()
+
+    # Compute aggregate grammar error count
+    grammar_count_q = await db.execute(
+        select(func.count(GrammarError.id))
+        .join(Utterance, Utterance.id == GrammarError.utterance_id)
+        .where(
+            Utterance.session_id == session_id,
+            GrammarError.is_expression_issue == False,
+        )
+    )
+    total_grammar_errors = grammar_count_q.scalar() or 0
+
     # Try to get existing summary
     summary_result = await db.execute(
         select(SessionSummary).where(
@@ -161,12 +202,12 @@ async def get_session_summary(
     )
     summary = summary_result.scalar_one_or_none()
 
-    # Generate if not exists
-    if not summary:
-        radar = _generate_radar_scores()
-        highlights = _generate_highlights(session.scene_id)
-        suggestions = _generate_suggestions()
+    # Generate or regenerate with real data
+    radar = _compute_radar_from_evaluations(pron_evals, total_grammar_errors, len(user_utterances))
+    highlights = _compute_highlights(pron_evals)
+    suggestions = _compute_suggestions(pron_evals, total_grammar_errors)
 
+    if not summary:
         summary = SessionSummary(
             session_id=session_id,
             radar_fluency=radar.fluency,
@@ -182,29 +223,16 @@ async def get_session_summary(
         await db.commit()
         await db.refresh(summary)
 
-    # Get scene name and duration
-    scene_name = None
-    if session.scene_id:
-        from ..models.scene import Scene
-        scene_result = await db.execute(
-            select(Scene.name).where(Scene.id == session.scene_id)
-        )
-        scene_name = scene_result.scalar_one_or_none()
-    duration_seconds = session.duration_seconds or 0
-
     # Get top pronunciation errors (up to 3)
-    from ..models.evaluation import PronunciationEvaluation, GrammarError
-    from ..models.session import Utterance
-
     pronunciation_errors: list[TopPronunciationError] = []
-    pron_result = await db.execute(
+    pron_err_result = await db.execute(
         select(PronunciationEvaluation)
         .join(Utterance, Utterance.id == PronunciationEvaluation.utterance_id)
         .where(Utterance.session_id == session_id)
         .order_by(PronunciationEvaluation.overall_score.asc())
         .limit(3)
     )
-    for pe in pron_result.scalars().all():
+    for pe in pron_err_result.scalars().all():
         utt_result = await db.execute(
             select(Utterance.text).where(Utterance.id == pe.utterance_id)
         )
@@ -245,13 +273,7 @@ async def get_session_summary(
         session_id=summary.session_id,
         scene_name=scene_name,
         duration_seconds=duration_seconds,
-        radar=RadarScores(
-            fluency=summary.radar_fluency or 50,
-            vocabulary=summary.radar_vocabulary or 50,
-            grammar=summary.radar_grammar or 50,
-            pronunciation=summary.radar_pronunciation or 50,
-            interaction=summary.radar_interaction or 50,
-        ),
+        radar=radar,
         highlights=summary.highlights or [],
         top_pronunciation_errors=pronunciation_errors,
         top_grammar_errors=grammar_errors,
@@ -261,52 +283,87 @@ async def get_session_summary(
     )
 
 
-def _generate_radar_scores() -> RadarScores:
+def _compute_radar_from_evaluations(
+    pron_evals: list,
+    total_grammar_errors: int,
+    user_utterance_count: int,
+) -> RadarScores:
+    """Compute radar scores from actual evaluation data."""
+    if pron_evals:
+        avg_pron = sum(e.overall_score for e in pron_evals) // len(pron_evals)
+        avg_fluency = sum(e.fluency_score or 50 for e in pron_evals) // len(pron_evals)
+    else:
+        avg_pron = 50
+        avg_fluency = 50
+
+    # Grammar: fewer errors → higher score (baseline 80, -5 per error, min 20)
+    grammar_score = max(20, 80 - total_grammar_errors * 5) if user_utterance_count > 0 else 50
+
+    # Vocabulary: based on average utterance length (proxy for vocab richness)
+    vocab_score = 50  # default; real implementation would use TTR or similar metrics
+
+    # Interaction: based on number of turns
+    interaction_score = min(95, 40 + user_utterance_count * 10) if user_utterance_count > 0 else 50
+
     return RadarScores(
-        fluency=random.randint(40, 85),
-        vocabulary=random.randint(40, 85),
-        grammar=random.randint(40, 85),
-        pronunciation=random.randint(40, 85),
-        interaction=random.randint(40, 85),
+        fluency=min(100, avg_fluency),
+        vocabulary=min(100, vocab_score),
+        grammar=min(100, grammar_score),
+        pronunciation=min(100, avg_pron),
+        interaction=min(100, interaction_score),
     )
 
 
-def _generate_highlights(scene_id: uuid.UUID | None) -> list[Highlight]:
-    highlights = [
-        Highlight(
-            title="发音准确",
-            description="大部分单词发音清晰，元音发音基本准确。",
-            example_sentence="The weather is nice today.",
-        ),
-        Highlight(
-            title="表达流畅",
-            description="对话中较少出现长时间停顿，语速适中。",
-            example_sentence="I think that's a great idea.",
-        ),
-        Highlight(
-            title="词汇运用",
-            description="使用了一些中级词汇，表达较为丰富。",
-            example_sentence="I'm particularly interested in this topic.",
-        ),
-    ]
+def _compute_highlights(pron_evals: list) -> list[Highlight]:
+    """Generate highlights based on actual good performance."""
+    highlights: list[Highlight] = []
+    if pron_evals:
+        best = max(pron_evals, key=lambda e: e.overall_score)
+        if best.overall_score >= 80:
+            highlights.append(Highlight(
+                title="发音准确",
+                description=f"你的最高发音得分达到 {best.overall_score} 分，表现优秀！",
+                example_sentence="继续保持这个水平。",
+            ))
+    if not highlights:
+        highlights.append(Highlight(
+            title="勇于开口",
+            description="坚持开口练习是提升口语最重要的一步。",
+            example_sentence="每次练习都在进步。",
+        ))
     return highlights
 
 
-def _generate_suggestions() -> list[PracticeSuggestion]:
-    return [
-        PracticeSuggestion(
-            title="练习连读技巧",
-            description="英语母语者常使用连读，建议每天跟读10分钟。",
-            resource_type="video",
-            resource_url="https://example.com/connected-speech-practice",
-        ),
-        PracticeSuggestion(
-            title="积累同义替换词汇",
-            description="用更丰富的词汇替代常见词汇，如用'excellent'替代'good'。",
+def _compute_suggestions(
+    pron_evals: list,
+    total_grammar_errors: int,
+) -> list[PracticeSuggestion]:
+    """Generate practice suggestions based on weak areas."""
+    suggestions: list[PracticeSuggestion] = []
+    if pron_evals:
+        avg_pron = sum(e.overall_score for e in pron_evals) // len(pron_evals)
+        if avg_pron < 70:
+            suggestions.append(PracticeSuggestion(
+                title="加强发音练习",
+                description="你的发音还有提升空间，建议每天跟读英语音频10分钟，关注元音发音位置。",
+                resource_type="video",
+                resource_url="https://example.com/pronunciation-basics",
+            ))
+    if total_grammar_errors > 2:
+        suggestions.append(PracticeSuggestion(
+            title="复习基础语法",
+            description=f"本场对话检测到 {total_grammar_errors} 个语法错误，建议重点复习时态和主谓一致。",
             resource_type="article",
-            resource_url="https://example.com/synonym-practice",
-        ),
-    ]
+            resource_url="https://example.com/grammar-review",
+        ))
+    if not suggestions:
+        suggestions.append(PracticeSuggestion(
+            title="挑战更高难度",
+            description="你表现得很好！尝试切换到高级难度，接触更复杂的表达。",
+            resource_type="exercise",
+            resource_url="https://example.com/advanced-practice",
+        ))
+    return suggestions
 
 
 # --- User Progress ---
