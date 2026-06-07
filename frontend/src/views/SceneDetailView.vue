@@ -72,23 +72,13 @@
         </span>
       </div>
 
-      <div style="display:flex;gap:10px">
-        <button
-          class="btn btn-start"
-          :disabled="starting"
-          @click="startSession"
-        >
-          {{ starting ? '创建会话中...' : '开始练习' }}
-        </button>
-        <button
-          class="btn btn-start"
-          style="background:linear-gradient(135deg, var(--accent-success), #22c55e);flex:0 0 auto;padding:14px 20px;font-size:0.9rem"
-          :disabled="addedToList"
-          @click="addToSceneList"
-        >
-          {{ addedToList ? '✓ 已添加' : '＋ 添加场景' }}
-        </button>
-      </div>
+      <button
+        class="btn btn-start"
+        :disabled="starting"
+        @click="startSession"
+      >
+        {{ starting ? '创建会话中...' : '开始练习' }}
+      </button>
 
       <p v-if="startError" class="start-error">{{ startError }}</p>
     </div>
@@ -118,7 +108,6 @@ const chatStore = useChatStore();
 const errorMsg = ref('');
 const starting = ref(false);
 const startError = ref('');
-const addedToList = ref(false);
 
 // Audio playback state
 const audio = ref<HTMLAudioElement | null>(null);
@@ -198,35 +187,6 @@ async function loadDetail() {
   } catch (e: any) {
     errorMsg.value = '加载场景详情失败';
   }
-}
-
-function addToSceneList() {
-  if (!scene.value) return;
-  const stored = sessionStorage.getItem('customScenes');
-  const list = stored ? JSON.parse(stored) : [];
-  // Avoid duplicates
-  if (list.find((s: any) => s.scene_id === scene.value!.scene_id)) {
-    addedToList.value = true;
-    return;
-  }
-  list.push({
-    scene_id: scene.value.scene_id,
-    name: scene.value.name,
-    description: scene.value.role_prompt || scene.value.name,
-    difficulty_levels: ['intermediate'],
-    tags: ['saved'],
-    _preset: true,
-    _data: {
-      topic: scene.value.name,
-      role_prompt: scene.value.role_prompt,
-      opening_line: scene.value.opening_line,
-      vocab_list: scene.value.vocab_list || [],
-      sentence_patterns: scene.value.sentence_patterns || [],
-    },
-  });
-  sessionStorage.setItem('customScenes', JSON.stringify(list));
-  addedToList.value = true;
-  setTimeout(() => { addedToList.value = false; }, 2000);
 }
 
 async function startSession() {

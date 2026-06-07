@@ -177,11 +177,6 @@ async function createCustomScene() {
       _data: res,
     };
     customScenes.value.push(newScene);
-    // Persist AI scenes
-    const stored = sessionStorage.getItem('aiScenes');
-    const aiList = stored ? JSON.parse(stored) : [];
-    aiList.push(newScene);
-    sessionStorage.setItem('aiScenes', JSON.stringify(aiList));
     showCustomScene.value = false;
   } catch (e: any) {
     customError.value = e?.response?.data?.detail || '场景生成失败';
@@ -265,20 +260,5 @@ async function goToRandomScene() {
   finally { randomLoading.value = false; }
 }
 
-onMounted(() => {
-  loadScenes();
-  // Load saved custom scenes from sessionStorage
-  const stored = sessionStorage.getItem('customScenes');
-  if (stored) {
-    try { customScenes.value = JSON.parse(stored); } catch {}
-  }
-  // Also load AI-generated scenes
-  const aiStored = sessionStorage.getItem('aiScenes');
-  if (aiStored) {
-    try {
-      const aiScenes = JSON.parse(aiStored);
-      customScenes.value = [...customScenes.value, ...aiScenes];
-    } catch {}
-  }
-});
+onMounted(() => { loadScenes(); });
 </script>
