@@ -8,6 +8,12 @@
         {{ statusText }}
       </div>
       <button
+        class="btn-scene-info"
+        :class="{ active: showSceneInfo }"
+        @click="showSceneInfo = !showSceneInfo"
+        title="场景信息"
+      >📋</button>
+      <button
         class="btn-tts"
         :class="{ muted: !chatStore.ttsEnabled }"
         :title="chatStore.ttsEnabled ? 'AI 语音播放中 — 点击静音' : 'AI 语音已静音 — 点击开启'"
@@ -21,7 +27,30 @@
     </header>
 
     <!-- Messages area -->
-    <div ref="messagesContainer" class="messages-area">
+    <div class="chat-body" :class="{ 'with-panel': showSceneInfo }">
+      <!-- Scene info panel -->
+      <div v-if="showSceneInfo && sceneDetail" class="scene-panel">
+        <h3>{{ sceneDetail.name }}</h3>
+        <div class="panel-section" v-if="sceneDetail.vocab_list?.length">
+          <h4>核心词汇</h4>
+          <div class="panel-vocab">
+            <span v-for="v in sceneDetail.vocab_list" :key="v.word" class="panel-word">
+              {{ v.word }}<small v-if="v.translation"> ({{ v.translation }})</small>
+            </span>
+          </div>
+        </div>
+        <div class="panel-section" v-if="sceneDetail.sentence_patterns?.length">
+          <h4>常用句式</h4>
+          <div class="panel-patterns">
+            <p v-for="(p, i) in sceneDetail.sentence_patterns" :key="i" class="panel-pattern">
+              {{ p.pattern }}<br>
+              <small v-if="p.translation">{{ p.translation }}</small>
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div ref="messagesContainer" class="messages-area">
       <div v-if="chatStore.messages.length === 0" class="empty-hint">
         <p>开始和 AI 对话练习吧！</p>
         <p class="sub">输入你的第一句话，AI 会扮演场景中的角色与你互动</p>
@@ -96,6 +125,8 @@
       </div>
     </div>
 
+    </div><!-- end chat-body -->
+
     <!-- Input area -->
     <div class="input-area">
       <button
@@ -154,6 +185,9 @@ const sceneStore = useSceneStore();
 
 const inputText = ref('');
 const messagesContainer = ref<HTMLElement | null>(null);
+const showSceneInfo = ref(false);
+const sceneDetail = ref<any>(null);
+import { sceneApi } from '@/api/scene';
 
 // Translation state
 const translations = ref<Record<string, string>>({});
@@ -378,6 +412,10 @@ onMounted(() => {
   }
   const sessionId = route.params.sessionId as string;
   chatStore.connect(sessionId, auth.token, { sceneId: chatStore.sceneId ?? undefined });
+  // Load scene detail for the info panel
+  if (chatStore.sceneId) {
+    sceneApi.getById(chatStore.sceneId).then(s => { sceneDetail.value = s; }).catch(() => {});
+  }
 });
 
 onUnmounted(() => {
@@ -393,7 +431,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  max-width: 800px;
+  max-width: 1100px;
   margin: 0 auto;
   background: var(--bg-primary);
 }
@@ -437,6 +475,75 @@ onUnmounted(() => {
   50% { opacity: 0.3; }
 }
 
+.btn-scene-info {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--bg-card);
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+.btn-scene-info:hover { background: var(--accent-warning); }
+.btn-scene-info.active { background: var(--accent-warning); color: #0f172a; }
+
+.chat-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+.chat-body.with-panel .messages-area {
+  flex: 1;
+}
+.scene-panel {
+  width: 260px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding: 16px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--bg-card);
+}
+.scene-panel h3 {
+  font-size: 1rem;
+  color: var(--accent-primary);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--bg-card);
+}
+.panel-section { margin-bottom: 14px; }
+.panel-section h4 {
+  font-size: 0.8rem;
+  color: var(--accent-warning);
+  margin-bottom: 6px;
+}
+.panel-vocab {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.panel-word {
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg-card);
+  font-size: 0.78rem;
+  color: var(--text-primary);
+}
+.panel-word small {
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+}
+.panel-pattern {
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+.panel-pattern small {
+  color: var(--text-secondary);
+}
+
 .btn-tts {
   width: 36px;
   height: 36px;
@@ -473,6 +580,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-width: 0;
 }
 .empty-hint {
   text-align: center;
