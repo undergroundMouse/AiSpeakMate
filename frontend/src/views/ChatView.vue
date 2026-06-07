@@ -23,30 +23,45 @@
       <!-- Scene info panel -->
       <div v-if="showSceneInfo && sceneDetail" class="scene-panel">
         <h3>{{ sceneDetail.name }}</h3>
-        <div class="panel-section" v-if="sceneDetail.vocab_list?.length">
+        <div class="panel-section">
           <h4>核心词汇</h4>
           <div class="panel-vocab">
-            <a v-for="v in sceneDetail.vocab_list" :key="v.word" class="panel-word"
+            <a v-for="v in allVocab" :key="v.word" class="panel-word"
               :href="'https://www.baidu.com/s?wd=' + encodeURIComponent(v.word + ' 英语')"
               target="_blank" rel="noopener"
               :title="'百度搜索: ' + v.word">
               {{ v.word }}<small v-if="v.translation"> ({{ v.translation }})</small>
             </a>
+            <!-- Add custom vocab -->
+            <div v-if="addingVocab" class="panel-add-row">
+              <input v-model="newVocab.word" placeholder="单词" class="panel-inline-input" size="10" @keydown.enter="confirmAddVocab" />
+              <input v-model="newVocab.translation" placeholder="翻译" class="panel-inline-input" size="8" @keydown.enter="confirmAddVocab" />
+              <button class="panel-inline-btn" @click="confirmAddVocab">✓</button>
+              <button class="panel-inline-btn" @click="addingVocab=false">✗</button>
+            </div>
+            <button v-else class="panel-add-btn" @click="addingVocab=true" title="添加词汇">＋</button>
           </div>
         </div>
-        <div class="panel-section" v-if="sceneDetail.sentence_patterns?.length">
+        <div class="panel-section">
           <h4>常用句式 (点击使用)</h4>
           <div class="panel-patterns">
-            <div v-for="(p, i) in sceneDetail.sentence_patterns" :key="i" class="panel-pattern-wrap">
-              <p class="panel-pattern" @click="usePattern(p.pattern)" title="点击填入输入框">
-                {{ p.pattern }}
+            <div v-for="(p, i) in allPatterns" :key="i" class="panel-pattern-wrap">
+              <p class="panel-pattern" @click="usePattern(typeof p === 'string' ? p : p.pattern)" title="点击填入输入框">
+                {{ typeof p === 'string' ? p : p.pattern }}
               </p>
-              <small v-if="p.translation" class="panel-pattern-trans">{{ p.translation }}</small>
-              <a class="panel-pattern-link"
-                :href="'https://www.baidu.com/s?wd=' + encodeURIComponent(p.pattern + ' 英语例句')"
+              <small v-if="typeof p !== 'string' && p.translation" class="panel-pattern-trans">{{ (p as any).translation }}</small>
+              <a v-if="typeof p !== 'string'" class="panel-pattern-link"
+                :href="'https://www.baidu.com/s?wd=' + encodeURIComponent((p as any).pattern + ' 英语例句')"
                 target="_blank" rel="noopener"
                 title="搜索例句">🔗 例句</a>
             </div>
+            <!-- Add custom pattern -->
+            <div v-if="addingPattern" class="panel-add-row">
+              <input v-model="newPattern" placeholder="如: Could you help me...?" class="panel-inline-input" style="flex:1" @keydown.enter="confirmAddPattern" />
+              <button class="panel-inline-btn" @click="confirmAddPattern">✓</button>
+              <button class="panel-inline-btn" @click="addingPattern=false">✗</button>
+            </div>
+            <button v-else class="panel-add-btn" @click="addingPattern=true" title="添加句式">＋</button>
           </div>
         </div>
       </div>
@@ -205,6 +220,38 @@ const inputText = ref('');
 const messagesContainer = ref<HTMLElement | null>(null);
 const showSceneInfo = ref(false);
 const sceneDetail = ref<any>(null);
+
+// Custom vocab + patterns
+const customVocab = ref<Array<{word:string,translation:string}>>([]);
+const customPatterns = ref<string[]>([]);
+const addingVocab = ref(false);
+const addingPattern = ref(false);
+const newVocab = ref({ word: '', translation: '' });
+const newPattern = ref('');
+
+const allVocab = computed(() => {
+  const base = sceneDetail.value?.vocab_list || [];
+  return [...base, ...customVocab.value];
+});
+const allPatterns = computed(() => {
+  const base = sceneDetail.value?.sentence_patterns || [];
+  return [...base, ...customPatterns.value];
+});
+
+function confirmAddVocab() {
+  if (newVocab.value.word.trim()) {
+    customVocab.value.push({ word: newVocab.value.word.trim(), translation: newVocab.value.translation.trim() });
+    newVocab.value = { word: '', translation: '' };
+  }
+  addingVocab.value = false;
+}
+function confirmAddPattern() {
+  if (newPattern.value.trim()) {
+    customPatterns.value.push(newPattern.value.trim());
+    newPattern.value = '';
+  }
+  addingPattern.value = false;
+}
 import { sceneApi } from '@/api/scene';
 
 // Translation state
@@ -598,6 +645,50 @@ onUnmounted(() => {
   margin-top: 2px;
 }
 .panel-pattern-link:hover { text-decoration: underline; }
+
+.panel-add-btn {
+  width: 26px;
+  height: 22px;
+  border-radius: 4px;
+  border: 1px dashed var(--bg-card);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.panel-add-btn:hover { border-color: var(--accent-primary); color: var(--accent-primary); }
+.panel-add-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.panel-inline-input {
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--bg-card);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  outline: none;
+}
+.panel-inline-input:focus { border-color: var(--accent-primary); }
+.panel-inline-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 0.7rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.panel-inline-btn:hover { background: var(--accent-primary); color: #0f172a; }
 
 .btn-end {
   padding: 6px 14px;
