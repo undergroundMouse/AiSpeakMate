@@ -21,11 +21,33 @@ export interface PracticeSuggestion {
   resource_url?: string;
 }
 
+export interface PronunciationErrorItem {
+  utterance_id: string;
+  sentence: string;
+  score: number;
+  detail_url: string;
+}
+
+export interface GrammarErrorItem {
+  utterance_id: string;
+  original: string;
+  error_type: string;
+  error_span: Record<string, number>;
+  correction: string;
+  corrected_sentence: string | null;
+  explanation: string | null;
+  severity: string;
+}
+
 export interface SessionSummary {
   id: string;
   session_id: string;
+  scene_name: string | null;
+  duration_seconds: number;
   radar: RadarScores;
   highlights: Highlight[];
+  top_pronunciation_errors: PronunciationErrorItem[];
+  top_grammar_errors: GrammarErrorItem[];
   practice_suggestions: PracticeSuggestion[];
   share_image_url: string | null;
   created_at: string;

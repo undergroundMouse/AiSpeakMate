@@ -29,6 +29,11 @@ const router = createRouter({
       component: () => import('@/views/SummaryView.vue'),
     },
     {
+      path: '/sessions/:sessionId/pronunciation/:utteranceId',
+      name: 'pronunciation-detail',
+      component: () => import('@/views/PronunciationDetailView.vue'),
+    },
+    {
       path: '/progress',
       name: 'progress',
       component: () => import('@/views/ProgressView.vue'),

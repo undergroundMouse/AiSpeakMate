@@ -65,6 +65,49 @@
         </div>
       </div>
 
+      <!-- Top pronunciation errors -->
+      <div v-if="summary.top_pronunciation_errors?.length" class="section">
+        <h2>发音薄弱句</h2>
+        <div
+          v-for="(pe, idx) in summary.top_pronunciation_errors"
+          :key="idx"
+          class="error-card pron-error"
+        >
+          <div class="error-header">
+            <span class="error-type-badge" :class="scoreBadgeClass(pe.score)">
+              {{ pe.score }}分
+            </span>
+          </div>
+          <p class="error-sentence">"{{ pe.sentence }}"</p>
+          <router-link
+            :to="`/sessions/${summary.session_id}/pronunciation/${pe.utterance_id}`"
+            class="detail-link"
+          >
+            查看发音详情 &rarr;
+          </router-link>
+        </div>
+      </div>
+
+      <!-- Top grammar errors -->
+      <div v-if="summary.top_grammar_errors?.length" class="section">
+        <h2>语法错误</h2>
+        <div
+          v-for="(ge, idx) in summary.top_grammar_errors"
+          :key="idx"
+          class="error-card grammar-error"
+        >
+          <div class="error-header">
+            <span class="error-type-badge grammar-badge">{{ ge.error_type }}</span>
+            <span class="error-severity" :class="'sev-' + (ge.severity || 'medium')">
+              {{ SEVERITY_MAP[ge.severity] || ge.severity }}
+            </span>
+          </div>
+          <p class="error-original">原文：{{ ge.original }}</p>
+          <p class="error-correction">修正：<strong>{{ ge.correction }}</strong></p>
+          <p v-if="ge.explanation" class="error-explanation">{{ ge.explanation }}</p>
+        </div>
+      </div>
+
       <!-- Practice suggestions -->
       <div v-if="summary.practice_suggestions?.length" class="section">
         <h2>练习建议</h2>
@@ -104,6 +147,18 @@ const auth = useAuthStore();
 const loading = ref(false);
 const errorMsg = ref('');
 const summary = ref<SessionSummary | null>(null);
+
+const SEVERITY_MAP: Record<string, string> = {
+  low: '轻微',
+  medium: '中等',
+  high: '严重',
+};
+
+function scoreBadgeClass(score: number): string {
+  if (score >= 80) return 'score-green';
+  if (score >= 60) return 'score-yellow';
+  return 'score-red';
+}
 
 async function loadSummary() {
   const sessionId = route.params.sessionId as string;
@@ -236,6 +291,73 @@ onMounted(() => {
   color: var(--accent-primary);
   font-size: 0.85rem;
 }
+
+/* Error cards */
+.error-card {
+  padding: 14px;
+  background: var(--bg-primary);
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+.error-card:last-child { margin-bottom: 0; }
+.pron-error { border-left: 3px solid var(--accent-warning); }
+.grammar-error { border-left: 3px solid var(--accent-danger); }
+.error-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.error-type-badge {
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.error-type-badge.score-green { background: rgba(74, 222, 128, 0.15); color: #4ade80; }
+.error-type-badge.score-yellow { background: rgba(251, 191, 36, 0.15); color: #fbbf24; }
+.error-type-badge.score-red { background: rgba(248, 113, 113, 0.15); color: #f87171; }
+.grammar-badge {
+  background: rgba(248, 113, 113, 0.15);
+  color: #f87171;
+}
+.error-severity {
+  font-size: 0.72rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.sev-low { background: rgba(74, 222, 128, 0.1); color: #4ade80; }
+.sev-medium { background: rgba(251, 191, 36, 0.1); color: #fbbf24; }
+.sev-high { background: rgba(248, 113, 113, 0.1); color: #f87171; }
+.error-sentence {
+  font-style: italic;
+  font-size: 0.9rem;
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+}
+.error-original {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+.error-correction {
+  font-size: 0.88rem;
+  color: var(--accent-success);
+  margin-bottom: 4px;
+}
+.error-explanation {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+.detail-link {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 0.82rem;
+  color: var(--accent-primary);
+  font-weight: 600;
+}
+.detail-link:hover { text-decoration: underline; }
 .resource-link {
   display: inline-block;
   margin-top: 8px;
