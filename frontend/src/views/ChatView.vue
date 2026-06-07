@@ -57,12 +57,21 @@
 
     <!-- Input area -->
     <div class="input-area">
+      <button
+        class="btn-mic"
+        :class="{ recording: isRecording }"
+        :disabled="!chatStore.connectionStatus.connected"
+        @click="toggleRecording"
+        :title="isRecording ? '停止录音' : '开始录音'"
+      >
+        <span class="mic-icon">{{ isRecording ? '⏹' : '🎤' }}</span>
+      </button>
       <textarea
         v-model="inputText"
         class="msg-input"
         placeholder="输入你的回答..."
         rows="2"
-        :disabled="!chatStore.connectionStatus.connected"
+        :disabled="!chatStore.connectionStatus.connected || isRecording"
         @keydown.enter.exact.prevent="sendText"
       ></textarea>
       <button
@@ -72,6 +81,13 @@
       >
         发送
       </button>
+    </div>
+
+    <!-- Recording indicator overlay -->
+    <div v-if="isRecording" class="recording-overlay">
+      <div class="recording-pulse"></div>
+      <span class="recording-text">正在录音... 点击停止按钮结束</span>
+      <span class="recording-duration">{{ recordingDuration }}s</span>
     </div>
   </div>
 </template>
@@ -134,6 +150,68 @@ function sendText() {
   inputText.value = '';
 }
 
+// --- Audio recording ---
+const isRecording = ref(false);
+const recordingDuration = ref(0);
+let mediaRecorder: MediaRecorder | null = null;
+let recordingTimer: ReturnType<typeof setInterval> | null = null;
+
+async function toggleRecording() {
+  if (isRecording.value) {
+    stopRecording();
+  } else {
+    await startRecording();
+  }
+}
+
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+    const chunks: BlobPart[] = [];
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data);
+    };
+
+    mediaRecorder.onstop = () => {
+      // Stop all tracks to release microphone
+      stream.getTracks().forEach((t) => t.stop());
+      // Send recorded audio via WebSocket
+      if (chunks.length > 0) {
+        const audioBlob = new Blob(chunks, { type: 'audio/webm' });
+        chatStore.sendAudio(audioBlob);
+      }
+      // Reset recording state
+      isRecording.value = false;
+      chatStore.isRecording = false;
+      recordingDuration.value = 0;
+      if (recordingTimer) {
+        clearInterval(recordingTimer);
+        recordingTimer = null;
+      }
+    };
+
+    mediaRecorder.start(250); // Collect data every 250ms
+    isRecording.value = true;
+    chatStore.isRecording = true;
+
+    // Start duration timer
+    recordingDuration.value = 0;
+    recordingTimer = setInterval(() => {
+      recordingDuration.value++;
+    }, 1000);
+  } catch (err) {
+    console.error('Failed to start recording:', err);
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
+  }
+}
+
 async function endSession() {
   chatStore.disconnect();
   const sessionId = route.params.sessionId as string;
@@ -150,6 +228,10 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  // Stop recording if active when leaving
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
+  }
   // Don't disconnect on unmount if user is navigating to summary
   // chatStore.disconnect();
 });
@@ -381,5 +463,65 @@ onUnmounted(() => {
 .btn-send:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* Microphone button */
+.btn-mic {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: var(--bg-card);
+  border: 2px solid var(--bg-card);
+  font-size: 1.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+.btn-mic:hover:not(:disabled) { background: var(--bg-primary); border-color: var(--accent-primary); }
+.btn-mic.recording {
+  background: var(--accent-danger);
+  border-color: var(--accent-danger);
+  animation: mic-pulse 1.2s infinite;
+}
+.btn-mic:disabled { opacity: 0.4; cursor: not-allowed; }
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
+  50% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+}
+
+/* Recording overlay */
+.recording-overlay {
+  position: fixed;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 24px;
+  background: var(--accent-danger);
+  color: #fff;
+  border-radius: 30px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  box-shadow: 0 4px 20px rgba(239, 68, 68, 0.3);
+  z-index: 100;
+}
+.recording-pulse {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  animation: pulse 0.8s infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.3); }
+}
+.recording-duration {
+  font-size: 0.85rem;
+  opacity: 0.85;
 }
 </style>
