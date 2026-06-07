@@ -185,6 +185,32 @@ async def get_scene_detail(
     )
 
 
+@router.get("/custom")
+async def list_custom_scenes(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all custom scenes created by the current user."""
+    result = await db.execute(
+        select(CustomScene)
+        .where(CustomScene.user_id == user.id)
+        .order_by(CustomScene.created_at.desc())
+        .limit(20)
+    )
+    scenes = result.scalars().all()
+    return [
+        {
+            "custom_scene_id": str(s.id),
+            "topic": s.topic,
+            "role_prompt": s.prompt_snapshot or f"You are {s.role or 'a conversation partner'}. Topic: {s.topic}.",
+            "opening_line": f"Let's talk about {s.topic}. What do you think?",
+            "difficulty": s.difficulty or "intermediate",
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+        }
+        for s in scenes
+    ]
+
+
 @router.post("/custom", status_code=status.HTTP_201_CREATED)
 async def create_custom_scene(
     body: CustomSceneRequest,
@@ -199,7 +225,7 @@ async def create_custom_scene(
         difficulty=body.difficulty,
         focus_grammar=body.focus_grammar,
         focus_vocab=body.focus_vocab,
-        is_temporary=True,
+        is_temporary=False,
     )
     db.add(custom)
     await db.commit()
@@ -241,6 +267,11 @@ Return ONLY a JSON object with these fields (no markdown, no explanation):
                 pattern_list.append({"pattern": p.get("pattern", ""), "translation": p.get("translation", "")})
     except Exception as e:
         print(f"AI scene generation failed: {e}")
+
+    # Save AI-generated prompt to DB
+    if role_prompt:
+        custom.prompt_snapshot = role_prompt
+        await db.commit()
 
     # Fallback if AI failed
     if not role_prompt:

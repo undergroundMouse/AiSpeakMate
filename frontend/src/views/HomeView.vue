@@ -284,6 +284,31 @@ async function goToRandomScene() {
 
 onMounted(() => {
   loadScenes();
-  customScenes.value = loadCustomScenes();
+  // Load custom scenes from backend
+  if (auth.isAuthenticated) {
+    sceneApi.listCustom().then(scenes => {
+      customScenes.value = scenes.map((s: any) => ({
+        scene_id: `custom_${s.custom_scene_id}`,
+        name: s.topic,
+        description: s.role_prompt || '',
+        difficulty_levels: [s.difficulty || 'intermediate'],
+        tags: ['custom'],
+        _custom: true,
+        _data: {
+          topic: s.topic,
+          role_prompt: s.role_prompt || '',
+          opening_line: s.opening_line || '',
+          vocab_list: [],
+          sentence_patterns: [],
+        },
+      }));
+      saveCustomScenes(customScenes.value);
+    }).catch(() => {});
+  }
+  // Also load from sessionStorage as cache
+  const cached = loadCustomScenes();
+  if (cached.length > 0 && customScenes.value.length === 0) {
+    customScenes.value = cached;
+  }
 });
 </script>

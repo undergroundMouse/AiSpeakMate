@@ -75,6 +75,10 @@ export const sceneApi = {
       .then((res) => res.data);
   },
 
+  listCustom() {
+    return apiClient.get<any[]>('/scenes/custom').then((res) => res.data);
+  },
+
   createCustom(data: CustomSceneRequest) {
     return apiClient.post<CustomSceneResponse>('/scenes/custom', data, { timeout: 45000 }).then((res) => res.data);
   },
