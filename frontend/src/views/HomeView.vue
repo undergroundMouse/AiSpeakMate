@@ -80,7 +80,12 @@
         <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:12px">描述你想要练习的场景，AI 将自动生成角色、开场白、词汇和句式</p>
         <input v-model="customTopic" placeholder="主题，如：在药店买药" style="width:100%;margin-bottom:8px" />
         <input v-model="customRole" placeholder="AI角色，如：药剂师 (可选)" style="width:100%;margin-bottom:8px" />
-        <textarea v-model="customDesc" placeholder="详细描述，如：我感冒了需要买药，告诉药剂师我的症状，询问该吃什么药 (可选)" style="width:100%;height:70px;margin-bottom:12px;padding:8px;border-radius:8px;border:1px solid var(--bg-card);background:var(--bg-primary);color:var(--text-primary);font-size:0.88rem;resize:vertical;font-family:inherit"></textarea>
+        <textarea v-model="customDesc" placeholder="详细描述 (可选)" style="width:100%;height:70px;margin-bottom:8px;padding:8px;border-radius:8px;border:1px solid var(--bg-card);background:var(--bg-primary);color:var(--text-primary);font-size:0.88rem;resize:vertical;font-family:inherit"></textarea>
+        <select v-model="customDifficulty" style="width:100%;margin-bottom:12px;padding:10px 14px;border-radius:8px;border:1px solid var(--bg-card);background:var(--bg-primary);color:var(--text-primary);font-size:0.9rem">
+          <option value="beginner">初级 — AI用简单词汇短句</option>
+          <option value="intermediate" selected>中级 — AI用日常对话水平</option>
+          <option value="advanced">高级 — AI用复杂表达</option>
+        </select>
         <p v-if="customError" style="color:var(--accent-danger);font-size:0.8rem;margin-bottom:8px">{{ customError }}</p>
         <div class="modal-actions">
           <button class="btn-cancel" @click="showCustomScene=false">取消</button>
@@ -150,6 +155,7 @@ const showCustomScene = ref(false);
 const customTopic = ref('');
 const customRole = ref('');
 const customDesc = ref('');
+const customDifficulty = ref('intermediate');
 const customLoading = ref(false);
 const customError = ref('');
 const STORAGE_KEY = 'aispeakmate_custom_scenes';
@@ -173,7 +179,7 @@ async function createCustomScene() {
       topic: customTopic.value,
       role: customRole.value || undefined,
       description: customDesc.value || undefined,
-      difficulty: 'intermediate',
+      difficulty: customDifficulty.value,
     });
     customSceneData.value = res;
     // Add to custom scenes list for display
@@ -181,7 +187,7 @@ async function createCustomScene() {
       scene_id: `custom_${Date.now()}`,
       name: res.topic,
       description: res.role_prompt,
-      difficulty_levels: ['intermediate'],
+      difficulty_levels: [customDifficulty.value],
       tags: ['custom'],
       _custom: true,
       _data: res,
