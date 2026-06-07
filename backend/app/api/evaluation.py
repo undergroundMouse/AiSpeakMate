@@ -216,6 +216,12 @@ async def get_grammar_report(
     )
     errors = errors_result.scalars().all()
 
+    # Count occurrences of each error type for frequency analysis
+    from collections import Counter
+    type_counts = Counter(
+        e.error_type for e in errors if not e.is_expression_issue
+    )
+
     error_list = []
     for e in errors:
         if not e.is_expression_issue:
@@ -228,6 +234,7 @@ async def get_grammar_report(
                 corrected_sentence=e.corrected_sentence,
                 explanation=e.explanation,
                 severity=e.severity,
+                occurrence_count=type_counts.get(e.error_type, 1),
             ))
 
     suggestions = []

@@ -824,27 +824,49 @@ async def _process_user_message(
                 ],
             })
 
-    # send pronunciation feedback with real data
+    # send pronunciation feedback with V1.1 enhanced data
+    detail_level = "full"  # default; could be configured per session
+    fb_payload = {
+        "session_id": str(current_session_id),
+        "utterance_id": str(user_utt.id),
+        "sentence_text": asr_text,
+        "overall_score": evaluation.overall_score,
+        "pronunciation_score": evaluation.pronunciation_score,
+        "fluency_score": evaluation.fluency_score,
+        "completeness_score": evaluation.completeness_score,
+        "brief_tip": evaluation.advice or "Keep practicing!",
+    }
+
+    if detail_level == "full" and word_scores:
+        # Include phoneme-level detail
+        fb_payload["word_scores"] = word_scores
+        # Add reference audio URL for the most problematic word
+        worst_word = min(word_scores, key=lambda w: w["score"]) if word_scores else None
+        if worst_word and worst_word["score"] < 60:
+            fb_payload["reference_audio_url"] = (
+                f"https://dict.youdao.com/dictvoice?audio={worst_word['word']}&type=0"
+            )
+
     await websocket.send_json({
         "type": "pronunciation_feedback",
-        "payload": {
-            "sentence_text": asr_text,
-            "overall_score": evaluation.overall_score,
-            "word_scores": word_scores,
-            "brief_tip": evaluation.advice or "Keep practicing!",
-        },
+        "payload": fb_payload,
     })
 
-    # persist and send grammar hints
+    # persist and send grammar hints with V1.1 enhanced fields
     grammar_errors = await _store_grammar_errors(db, user_utt, asr_text)
     for ge in grammar_errors:
         await websocket.send_json({
             "type": "grammar_hint",
             "payload": {
+                "session_id": str(current_session_id),
+                "utterance_id": str(user_utt.id),
                 "original_text": ge.original_text,
                 "error_span": {"start": ge.error_span_start, "end": ge.error_span_end},
                 "correction": ge.correction,
+                "corrected_sentence": ge.corrected_sentence,
                 "hint": ge.explanation or "",
+                "severity": ge.severity or "medium",
+                "hint_type": "expression" if ge.is_expression_issue else "grammar",
             },
         })
 
