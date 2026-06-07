@@ -11,6 +11,7 @@ class DictResponse(BaseModel):
     word: str
     phonetic: str = ""
     audio_url: str = ""
+    chinese_translation: str = ""  # Chinese meaning summary
     meanings: list[dict] = []
     phrases: list[dict] = []
 
@@ -21,7 +22,18 @@ async def lookup_word(word: str):
     result = DictResponse(word=word)
 
     async with httpx.AsyncClient(timeout=8.0) as client:
-        # Try iciba API first (richest Chinese-English dictionary)
+        # Get Chinese translation via MyMemory
+        try:
+            resp = await client.get("https://api.mymemory.translated.net/get", params={
+                "q": word, "langpair": "en|zh-CN",
+            })
+            if resp.status_code == 200:
+                data = resp.json()
+                result.chinese_translation = data.get("responseData", {}).get("translatedText", "")
+        except Exception:
+            pass
+
+        # Try iciba API for richer Chinese data
         try:
             resp = await client.get(
                 "https://dict.iciba.com/dictionary/word/query/web",
@@ -30,13 +42,13 @@ async def lookup_word(word: str):
             )
             if resp.status_code == 200:
                 data = resp.json()
-                result = _parse_iciba(word, data)
+                result = _parse_iciba(word, data, result.chinese_translation)
                 if result.meanings:
                     return result
         except Exception:
             pass
 
-        # Fallback: Free Dictionary API
+        # Fallback: Free Dictionary API (English) + Chinese translation
         try:
             resp = await client.get(
                 f"https://api.dictionaryapi.dev/api/v2/entries/en/{word}",
@@ -44,7 +56,7 @@ async def lookup_word(word: str):
             )
             if resp.status_code == 200:
                 data = resp.json()
-                result = _parse_free_dict(word, data)
+                result = _parse_free_dict(word, data, result.chinese_translation)
                 return result
         except Exception:
             pass
@@ -52,9 +64,9 @@ async def lookup_word(word: str):
     return result
 
 
-def _parse_iciba(word: str, data: dict) -> DictResponse:
+def _parse_iciba(word: str, data: dict, cn_trans: str = "") -> DictResponse:
     """Parse 金山词霸 API response."""
-    result = DictResponse(word=word)
+    result = DictResponse(word=word, chinese_translation=cn_trans)
 
     # Phonetic
     baidu_trans = data.get("baidu_translate", {}) or {}
@@ -115,9 +127,9 @@ def _parse_iciba(word: str, data: dict) -> DictResponse:
     return result
 
 
-def _parse_free_dict(word: str, data: list) -> DictResponse:
+def _parse_free_dict(word: str, data: list, cn_trans: str = "") -> DictResponse:
     """Parse Free Dictionary API response."""
-    result = DictResponse(word=word)
+    result = DictResponse(word=word, chinese_translation=cn_trans)
     entry = data[0] if data else {}
     result.phonetic = entry.get("phonetic", "") or (entry.get("phonetics", [{}])[0].get("text", "") if entry.get("phonetics") else "")
     result.meanings = []

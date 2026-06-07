@@ -175,6 +175,10 @@
         <div v-if="dictLoading" style="text-align:center;padding:20px;color:var(--text-secondary)">查询中...</div>
         <div v-else-if="dictError" style="color:var(--accent-danger);text-align:center">{{ dictError }}</div>
         <div v-else-if="dictData">
+          <div v-if="dictData.chinese_translation" style="margin-bottom:12px;padding:8px 12px;background:rgba(56,189,248,0.08);border-radius:6px;border-left:3px solid var(--accent-primary)">
+            <span style="font-size:0.85rem;color:var(--text-secondary)">中文释义：</span>
+            <span style="font-size:1rem;font-weight:600;color:var(--accent-primary)">{{ dictData.chinese_translation }}</span>
+          </div>
           <div v-if="dictData.phonetic" style="margin-bottom:10px">
             <span style="color:var(--accent-primary);font-size:0.9rem">{{ dictData.phonetic }}</span>
             <button class="btn-sm" style="margin-left:8px;padding:2px 8px;background:var(--accent-primary);color:#0f172a;border-radius:4px;font-size:0.75rem" @click="speakDictWord">🔊 发音</button>
@@ -323,6 +327,7 @@ async function lookupWord(word: string) {
     const res = await apiClient.get(`/dictionary/${encodeURIComponent(word)}`);
     const data = res.data;
     dictData.value = {
+      chinese_translation: data.chinese_translation || '',
       phonetic: data.phonetic || '',
       audio_url: data.audio_url || '',
       meanings: data.meanings?.map((m: any) => ({
