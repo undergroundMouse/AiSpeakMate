@@ -77,9 +77,9 @@
               :title="'播放我的录音'"
               @click="chatStore.playMessageAudio(msg)"
             >🔊</button>
-            <!-- Pause/Resume AI speech -->
+            <!-- Pause/Resume speech -->
             <button
-              v-if="msg.role === 'assistant' && !msg.isTemporary"
+              v-if="!msg.isTemporary"
               class="btn-speaker"
               :title="isPaused ? '继续播放' : '暂停播放'"
               @click="togglePause()"
