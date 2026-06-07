@@ -189,6 +189,12 @@ export const useChatStore = defineStore('chat', () => {
               const audio = new Audio(url);
               currentAudio = audio;
               isPaused.value = false;
+              // Store audio URL on the last AI message for replay
+              const lastAiMsg = [...messages.value].reverse().find(m => m.role === 'assistant');
+              if (lastAiMsg) {
+                lastAiMsg.audioUrl = url;
+                lastAiMsg.audioBlob = blob;
+              }
               audio.play().catch(() => {});
               audio.onended = () => {
                 URL.revokeObjectURL(url);

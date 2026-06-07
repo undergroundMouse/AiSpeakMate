@@ -84,12 +84,12 @@
 
           <!-- Action buttons row -->
           <div class="msg-actions">
-            <!-- Speaker button: replay AI TTS (always works regardless of header TTS toggle) -->
+            <!-- Speaker button: replay AI TTS (Edge-TTS audio or SpeechSynthesis fallback) -->
             <button
               v-if="msg.role === 'assistant' && !msg.isTemporary"
               class="btn-speaker"
               :title="'播放AI语音'"
-              @click="replayTts(msg.content)"
+              @click="replayAiAudio(msg)"
             >🔊</button>
             <!-- Speaker button: play user recording -->
             <button
@@ -259,10 +259,14 @@ const translations = ref<Record<string, string>>({});
 const translatingId = ref<string | null>(null);
 import apiClient from '@/api/client';
 
-function replayTts(text: string) {
-  // Always speak regardless of header TTS toggle
+function replayAiAudio(msg: any) {
+  // Play stored Edge-TTS audio if available, fallback to SpeechSynthesis
   chatStore.stopSpeaking();
-  chatStore.speakText(text);
+  if (msg.audioUrl || msg.audioBlob) {
+    chatStore.playMessageAudio(msg);
+  } else {
+    chatStore.speakText(msg.content);
+  }
 }
 
 async function toggleTranslate(msgId: string, text: string) {
