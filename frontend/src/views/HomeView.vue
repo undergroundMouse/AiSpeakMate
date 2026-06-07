@@ -213,7 +213,17 @@ async function deleteCustomScene(scene: any) {
 
 function viewCustomScene(scene: any) {
   if (!auth.isAuthenticated) return;
-  sessionStorage.setItem('customSceneDetail', JSON.stringify(scene._data));
+  // Build complete data from scene object
+  const data = {
+    topic: scene.name,
+    role_prompt: scene.description || scene._data?.role_prompt || '',
+    opening_line: scene._data?.opening_line || 'Hello! How can I help you today?',
+    vocab_list: scene._data?.vocab_list || [],
+    sentence_patterns: scene._data?.sentence_patterns || [],
+    suggested_duration_minutes: 5,
+    ...scene._data,
+  };
+  sessionStorage.setItem('customSceneDetail', JSON.stringify(data));
   router.push(`/scenes/custom_detail`);
 }
 async function startCustomFromList(scene: any) {

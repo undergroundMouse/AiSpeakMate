@@ -180,23 +180,23 @@ async function loadDetail() {
   const id = route.params.id;
 
   // Check for custom scene from sessionStorage
-  if (id === 'custom_detail') {
+  if (id === 'custom_detail' || (typeof id === 'string' && id.startsWith('custom_'))) {
     const stored = sessionStorage.getItem('customSceneDetail');
     if (stored) {
       try {
         const data = JSON.parse(stored);
         sceneStore.currentScene = {
           scene_id: 0,
-          name: data.topic || '自定义场景',
-          role_prompt: data.role_prompt || '',
-          opening_line: data.opening_line || '',
-          vocab_list: data.vocab_list || [],
-          sentence_patterns: data.sentence_patterns || [],
+          name: data.topic || data.name || '自定义场景',
+          role_prompt: data.role_prompt || data.description || '',
+          opening_line: data.opening_line || 'Hello! How can I help you today?',
+          vocab_list: data.vocab_list || data.vocabulary || [],
+          sentence_patterns: data.sentence_patterns || data.patterns || [],
           difficulty_settings: null,
-          suggested_duration_minutes: 5,
+          suggested_duration_minutes: data.suggested_duration_minutes || 5,
           _custom: true,
           _data: data,
-        };
+        } as any;
         return;
       } catch {}
     }
