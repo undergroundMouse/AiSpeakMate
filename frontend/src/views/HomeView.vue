@@ -17,10 +17,15 @@
       <!-- Search -->
       <input v-model="searchQuery" class="search-bar" type="text" placeholder="🔍 搜索场景..." @input="onSearch" />
 
-      <!-- Random challenge -->
-      <button class="btn-random-home" :disabled="randomLoading" @click="goToRandomScene">
-        {{ randomLoading ? '🎲 匹配中...' : '🎲 随机挑战' }}
-      </button>
+      <!-- Random challenge + Custom scene -->
+      <div style="display:flex;gap:10px;justify-content:center;margin-bottom:20px;flex-wrap:wrap">
+        <button class="btn-random-home" :disabled="randomLoading" @click="goToRandomScene" style="margin:0">
+          {{ randomLoading ? '🎲 匹配中...' : '🎲 随机挑战' }}
+        </button>
+        <button class="btn-random-home" style="background:linear-gradient(135deg, var(--accent-primary), #6366f1);margin:0" @click="showCustomScene = true">
+          ✨ 自定义场景
+        </button>
+      </div>
 
       <!-- Categories -->
       <div v-for="cat in filteredCategories" :key="cat.category_id" style="margin-bottom:8px">
@@ -47,6 +52,57 @@
         暂无可用场景
       </p>
     </div>
+
+    <!-- Custom scene modal -->
+    <div v-if="showCustomScene" class="modal-overlay" @click.self="showCustomScene=false">
+      <div class="modal-box" style="max-width:500px">
+        <h3>✨ 自定义场景</h3>
+        <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:12px">描述你想要练习的场景，AI 将自动生成角色、开场白、词汇和句式</p>
+        <input v-model="customTopic" placeholder="主题，如：在药店买药" style="width:100%;margin-bottom:8px" />
+        <input v-model="customRole" placeholder="AI角色，如：药剂师 (可选)" style="width:100%;margin-bottom:8px" />
+        <select v-model="customDifficulty" style="width:100%;margin-bottom:12px">
+          <option value="beginner">初级</option>
+          <option value="intermediate" selected>中级</option>
+          <option value="advanced">高级</option>
+        </select>
+        <p v-if="customError" style="color:var(--accent-danger);font-size:0.8rem;margin-bottom:8px">{{ customError }}</p>
+        <div class="modal-actions">
+          <button class="btn-cancel" @click="showCustomScene=false">取消</button>
+          <button class="btn-confirm" :disabled="customLoading || !customTopic.trim()" @click="createCustomScene">
+            {{ customLoading ? 'AI 生成中...' : '生成场景' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Generated scene preview -->
+    <div v-if="customSceneData" class="modal-overlay" @click.self="customSceneData=null">
+      <div class="modal-box" style="max-width:520px;max-height:70vh;overflow-y:auto">
+        <h3>✨ {{ customSceneData.topic }}</h3>
+        <div style="margin:12px 0;padding:10px;background:var(--bg-primary);border-radius:8px">
+          <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:4px">AI 角色：</p>
+          <p style="font-size:0.9rem">{{ customSceneData.role_prompt }}</p>
+        </div>
+        <div style="margin:12px 0;padding:10px;background:var(--bg-primary);border-radius:8px;border-left:3px solid var(--accent-primary)">
+          <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:4px">开场白：</p>
+          <p style="font-size:0.95rem;font-style:italic">"{{ customSceneData.opening_line }}"</p>
+        </div>
+        <div v-if="customSceneData.vocab_list?.length" style="margin-bottom:10px">
+          <h4 style="font-size:0.8rem;color:var(--text-secondary)">词汇</h4>
+          <div style="display:flex;flex-wrap:wrap;gap:4px">
+            <span v-for="v in customSceneData.vocab_list" :key="v.word" style="padding:2px 8px;background:var(--bg-card);border-radius:4px;font-size:0.78rem">{{ v.word }} ({{ v.translation }})</span>
+          </div>
+        </div>
+        <div v-if="customSceneData.sentence_patterns?.length" style="margin-bottom:10px">
+          <h4 style="font-size:0.8rem;color:var(--text-secondary)">句式</h4>
+          <div v-for="(p,i) in customSceneData.sentence_patterns" :key="i" style="font-size:0.82rem;padding:3px 0;color:var(--text-primary)">{{ p.pattern }} <span style="color:var(--text-secondary)">({{ p.translation }})</span></div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn-cancel" @click="customSceneData=null">关闭</button>
+          <button class="btn-confirm" @click="startCustomScene">开始练习</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -72,6 +128,43 @@ const loading = ref(false);
 const errorMsg = ref('');
 const searchQuery = ref('');
 const randomLoading = ref(false);
+
+// Custom scene
+const showCustomScene = ref(false);
+const customTopic = ref('');
+const customRole = ref('');
+const customDifficulty = ref('intermediate');
+const customLoading = ref(false);
+const customError = ref('');
+const customSceneData = ref<any>(null);
+
+async function createCustomScene() {
+  customError.value = ''; customLoading.value = true;
+  try {
+    const res = await sceneApi.createCustom({
+      topic: customTopic.value,
+      role: customRole.value || undefined,
+      difficulty: customDifficulty.value,
+    });
+    customSceneData.value = res;
+    showCustomScene.value = false;
+  } catch (e: any) {
+    customError.value = e?.response?.data?.detail || '场景生成失败';
+  } finally { customLoading.value = false; }
+}
+
+async function startCustomScene() {
+  if (!customSceneData.value) return;
+  try {
+    const session = await sessionApi.create({ scene_id: 1 });
+    chatStore.sceneId = session.scene_id;
+    // Store custom scene data for ChatView
+    sessionStorage.setItem('customScene', JSON.stringify(customSceneData.value));
+    router.push(`/chat/${session.session_id}`);
+  } catch (e: any) {
+    customError.value = '创建会话失败';
+  }
+}
 
 const totalScenes = computed(() =>
   sceneStore.categories.flatMap(c => c.scenes).length

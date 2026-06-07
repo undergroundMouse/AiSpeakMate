@@ -205,14 +205,53 @@ async def create_custom_scene(
     await db.commit()
     await db.refresh(custom)
 
-    # Generate role_prompt and opening_line based on topic/role
-    role_name = body.role or "an English conversation partner"
-    role_prompt = f"You are {role_name}. Talk about: {body.topic}. Keep the conversation at {body.difficulty} level. Correct the user's grammar gently and encourage them."
-    opening_line = f"Hi! Let's talk about {body.topic}. What do you think about this topic?"
+    # Try to generate scene with AI
+    role_prompt = ""
+    opening_line = ""
+    vocab_list = []
+    pattern_list = []
+
+    try:
+        from ..services.llm_service import generate_response as llm_generate
+        prompt = f"""Create an English conversation practice scene about: {body.topic}
+Role: {body.role or 'conversation partner'}
+Difficulty: {body.difficulty}
+
+Return ONLY a JSON object with these fields (no markdown, no explanation):
+{{
+  "role_prompt": "You are [role description]. [How to behave, tone, accent]. Keep response under 2 sentences.",
+  "opening_line": "[First thing the AI says to start the conversation. Must be in English.]",
+  "vocabulary": [{{"word": "...", "translation": "中文"}}, ... 5 words max],
+  "sentence_patterns": [{{"pattern": "...", "translation": "中文含义"}}, ... 3 patterns max]
+}}"""
+
+        ai_response = await llm_generate(prompt, "You are a JSON API. Return valid JSON only.")
+        if ai_response:
+            import json as _json
+            # Clean markdown fences if present
+            ai_response = ai_response.strip().removeprefix("```json").removesuffix("```").strip()
+            data = _json.loads(ai_response)
+            role_prompt = data.get("role_prompt", "")
+            opening_line = data.get("opening_line", "")
+            for v in data.get("vocabulary", []):
+                vocab_list.append({"word": v.get("word", ""), "translation": v.get("translation", "")})
+            for p in data.get("sentence_patterns", []):
+                pattern_list.append({"pattern": p.get("pattern", ""), "translation": p.get("translation", "")})
+    except Exception as e:
+        print(f"AI scene generation failed: {e}")
+
+    # Fallback if AI failed
+    if not role_prompt:
+        role_name = body.role or "an English conversation partner"
+        role_prompt = f"You are {role_name}. Talk about: {body.topic}. Keep the conversation at {body.difficulty} level."
+    if not opening_line:
+        opening_line = f"Hi! Let's talk about {body.topic}. What do you think about this topic?"
 
     return {
         "custom_scene_id": str(custom.id),
         "topic": body.topic,
         "role_prompt": role_prompt,
         "opening_line": opening_line,
+        "vocab_list": vocab_list,
+        "sentence_patterns": pattern_list,
     }
