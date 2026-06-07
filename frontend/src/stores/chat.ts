@@ -46,6 +46,17 @@ export const useChatStore = defineStore('chat', () => {
   let currentAudio: HTMLAudioElement | null = null;
 
   // --- TTS (Speech Synthesis) ---
+  function _getTtsVoice(): string {
+    const v = localStorage.getItem('ttsVoice') || 'en-US-female';
+    const map: Record<string, string> = {
+      'en-US-female': 'en-US-JennyNeural',
+      'en-US-male': 'en-US-GuyNeural',
+      'en-GB-female': 'en-GB-SoniaNeural',
+      'en-GB-male': 'en-GB-RyanNeural',
+    };
+    return map[v] || 'en-US-JennyNeural';
+  }
+
   function speakText(text: string) {
     if (!ttsEnabled.value) return;
     if (!window.speechSynthesis) return;
@@ -54,9 +65,14 @@ export const useChatStore = defineStore('chat', () => {
     window.speechSynthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-US';
-    utterance.rate = 0.9;  // slightly slower for learners
+    utterance.lang = _getTtsVoice().startsWith('en-GB') ? 'en-GB' : 'en-US';
+    utterance.rate = 0.9;
     utterance.pitch = 1.0;
+
+    // Try to set voice if available
+    const voices = window.speechSynthesis.getVoices();
+    const preferredVoice = voices.find(v => v.name.includes(_getTtsVoice().split('-')[2] || ''));
+    if (preferredVoice) utterance.voice = preferredVoice;
 
     utterance.onstart = () => { isAiSpeaking.value = true; };
     utterance.onend = () => { isAiSpeaking.value = false; };
@@ -135,6 +151,10 @@ export const useChatStore = defineStore('chat', () => {
         payload: {
           session_id: sessionId,
           scene_id: sceneId.value,
+          config: {
+            audio_format: 'pcm_s16le',
+            tts_voice: _getTtsVoice(),
+          },
         },
       }));
     };
