@@ -22,6 +22,7 @@ from ..schemas.summary import (
     PracticeSuggestion,
     TopPronunciationError,
     TopGrammarError,
+    ExpressionSuggestion,
     UserProgressResponse,
     ProgressSnapshot,
     WeaknessRecord,
@@ -268,6 +269,25 @@ async def get_session_summary(
             severity=ge.severity or "medium",
         ))
 
+    # Get expression optimization suggestions (is_expression_issue=True)
+    expr_suggestions: list[ExpressionSuggestion] = []
+    expr_result = await db.execute(
+        select(GrammarError)
+        .join(Utterance, Utterance.id == GrammarError.utterance_id)
+        .where(
+            Utterance.session_id == session_id,
+            GrammarError.is_expression_issue == True,
+        )
+        .order_by(GrammarError.id)
+        .limit(10)
+    )
+    for ge in expr_result.scalars().all():
+        expr_suggestions.append(ExpressionSuggestion(
+            original=ge.original_text or "",
+            suggestion=ge.correction or "",
+            reason=ge.explanation,
+        ))
+
     return SessionSummaryResponse(
         id=summary.id,
         session_id=summary.session_id,
@@ -277,6 +297,7 @@ async def get_session_summary(
         highlights=summary.highlights or [],
         top_pronunciation_errors=pronunciation_errors,
         top_grammar_errors=grammar_errors,
+        expression_suggestions=expr_suggestions,
         practice_suggestions=summary.practice_suggestions or [],
         share_image_url=summary.share_image_url,
         created_at=summary.created_at,

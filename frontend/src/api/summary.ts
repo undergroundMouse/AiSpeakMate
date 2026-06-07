@@ -39,6 +39,12 @@ export interface GrammarErrorItem {
   severity: string;
 }
 
+export interface ExpressionSuggestionItem {
+  original: string;
+  suggestion: string;
+  reason: string | null;
+}
+
 export interface SessionSummary {
   id: string;
   session_id: string;
@@ -48,6 +54,7 @@ export interface SessionSummary {
   highlights: Highlight[];
   top_pronunciation_errors: PronunciationErrorItem[];
   top_grammar_errors: GrammarErrorItem[];
+  expression_suggestions: ExpressionSuggestionItem[];
   practice_suggestions: PracticeSuggestion[];
   share_image_url: string | null;
   created_at: string;

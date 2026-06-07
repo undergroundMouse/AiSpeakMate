@@ -46,6 +46,13 @@ class TopGrammarError(BaseModel):
     severity: str = "medium"
 
 
+class ExpressionSuggestion(BaseModel):
+    """A specific expression optimization suggestion from a session."""
+    original: str
+    suggestion: str
+    reason: str | None = None
+
+
 class SessionSummaryResponse(BaseModel):
     id: uuid.UUID
     session_id: uuid.UUID
@@ -55,6 +62,7 @@ class SessionSummaryResponse(BaseModel):
     highlights: list[Highlight] = []
     top_pronunciation_errors: list[TopPronunciationError] = []
     top_grammar_errors: list[TopGrammarError] = []
+    expression_suggestions: list[ExpressionSuggestion] = []
     practice_suggestions: list[PracticeSuggestion] = []
     share_image_url: str | None = None
     created_at: datetime

@@ -108,6 +108,23 @@
         </div>
       </div>
 
+      <!-- Expression suggestions -->
+      <div v-if="summary.expression_suggestions?.length" class="section">
+        <h2>表达优化建议</h2>
+        <div
+          v-for="(es, idx) in summary.expression_suggestions"
+          :key="idx"
+          class="error-card expr-suggestion"
+        >
+          <div class="expr-row">
+            <span class="expr-original">"{{ es.original }}"</span>
+            <span class="expr-arrow">&rarr;</span>
+            <span class="expr-suggest"><strong>{{ es.suggestion }}</strong></span>
+          </div>
+          <p v-if="es.reason" class="error-explanation">{{ es.reason }}</p>
+        </div>
+      </div>
+
       <!-- Practice suggestions -->
       <div v-if="summary.practice_suggestions?.length" class="section">
         <h2>练习建议</h2>
@@ -364,6 +381,30 @@ onMounted(() => {
   font-weight: 600;
 }
 .detail-link:hover { text-decoration: underline; }
+
+/* Expression suggestions */
+.expr-suggestion {
+  border-left: 3px solid var(--accent-success);
+}
+.expr-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.9rem;
+  flex-wrap: wrap;
+}
+.expr-original {
+  color: var(--text-secondary);
+  text-decoration: line-through;
+  font-style: italic;
+}
+.expr-arrow {
+  color: var(--accent-primary);
+  font-weight: 700;
+}
+.expr-suggest {
+  color: var(--accent-success);
+}
 .resource-link {
   display: inline-block;
   margin-top: 8px;

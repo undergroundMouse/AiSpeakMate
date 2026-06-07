@@ -187,6 +187,44 @@ async def _store_grammar_errors(
                 db.add(error)
                 errors.append(error)
 
+    # Expression optimization: detect simple/repetitive words
+    expression_map = {
+        "very good": ("excellent / outstanding", "使用更高级词汇可提升表达丰富度"),
+        "very bad": ("terrible / awful", "使用更精准的形容词替代 'very bad'"),
+        "very big": ("enormous / massive", "使用更高级的形容词替代"),
+        "very small": ("tiny / minute", "使用更高级的形容词替代"),
+        "very happy": ("delighted / thrilled", "使用更高级的形容词替代"),
+        "very sad": ("devastated / heartbroken", "使用更高级的形容词替代"),
+        "very tired": ("exhausted / worn out", "使用更高级的形容词替代"),
+        "very nice": ("wonderful / lovely", "使用更高级的形容词替代"),
+        "very important": ("crucial / essential", "使用更高级的形容词替代"),
+        "a lot of": ("many / numerous / a great deal of", "使用更丰富的量词表达"),
+        "i think": ("I believe / in my opinion / from my perspective", "使用更多样的观点表达"),
+        "i like": ("I enjoy / I'm fond of / I'm keen on", "丰富表达喜好方式"),
+        "good": ("excellent / beneficial / favorable", "使用更具体的形容词替代 'good'"),
+        "bad": ("poor / unfavorable / negative", "使用更具体的形容词替代 'bad'"),
+        "big": ("large / substantial / significant", "使用更具体的形容词替代 'big'"),
+        "small": ("compact / minor / slight", "使用更具体的形容词替代 'small'"),
+    }
+
+    for phrase, (suggestion, reason) in expression_map.items():
+        if phrase in lower:
+            idx = lower.find(phrase)
+            if idx >= 0:
+                error = GrammarError(
+                    utterance_id=utterance.id,
+                    error_type="expression",
+                    error_span_start=idx,
+                    error_span_end=idx + len(phrase),
+                    original_text=text[idx:idx + len(phrase)],
+                    correction=suggestion,
+                    explanation=reason,
+                    severity="low",
+                    is_expression_issue=True,
+                )
+                db.add(error)
+                errors.append(error)
+
     if errors:
         await db.commit()
 
@@ -573,18 +611,31 @@ async def _process_user_message(
         },
     })
 
-    # persist and send grammar hints
+    # persist and send grammar hints + expression suggestions
     grammar_errors = await _store_grammar_errors(db, user_utt, asr_text)
     for ge in grammar_errors:
-        await websocket.send_json({
-            "type": "grammar_hint",
-            "payload": {
-                "original_text": ge.original_text,
-                "error_span": {"start": ge.error_span_start, "end": ge.error_span_end},
-                "correction": ge.correction,
-                "hint": ge.explanation or "",
-            },
-        })
+        if ge.is_expression_issue:
+            await websocket.send_json({
+                "type": "grammar_hint",
+                "payload": {
+                    "original_text": ge.original_text,
+                    "error_span": {"start": ge.error_span_start, "end": ge.error_span_end},
+                    "correction": ge.correction,
+                    "hint": ge.explanation or "",
+                    "hint_type": "expression",
+                },
+            })
+        else:
+            await websocket.send_json({
+                "type": "grammar_hint",
+                "payload": {
+                    "original_text": ge.original_text,
+                    "error_span": {"start": ge.error_span_start, "end": ge.error_span_end},
+                    "correction": ge.correction,
+                    "hint": ge.explanation or "",
+                    "hint_type": "grammar",
+                },
+            })
 
     # generate LLM response
     data = await _get_session_data(db, current_session_id)
