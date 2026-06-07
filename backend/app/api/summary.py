@@ -547,6 +547,89 @@ async def get_weakness_distribution(
     )
 
 
+# --- Review Plan (V1.1) ---
+
+@router.get("/users/{user_id}/review-plan", summary="获取复习计划")
+async def get_review_plan(
+    user_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """V1.1: Generate a personalized review plan based on user weaknesses."""
+    if current_user.id != user_id:
+        raise HTTPException(403, "Access denied")
+
+    from ..models.evaluation import PhonemeScore, PronunciationEvaluation
+    from ..models.session import Utterance
+
+    # Get top weaknesses
+    weakness_q = await db.execute(
+        select(UserWeaknessRecord)
+        .where(UserWeaknessRecord.user_id == user_id)
+        .order_by(UserWeaknessRecord.error_count.desc())
+        .limit(5)
+    )
+    weaknesses = weakness_q.scalars().all()
+
+    items = []
+    for w in weaknesses:
+        ex_ids = [f"ex_{w.item.replace(' ', '_').replace('/', '')}_{i}" for i in range(1, 3)]
+        items.append({
+            "type": w.category,
+            "target": w.item,
+            "exercise_ids": ex_ids,
+            "estimated_minutes": min(w.error_count * 2, 10),
+        })
+
+    return {
+        "plan_id": f"plan_{uuid.uuid4().hex[:8]}",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "items": items,
+    }
+
+
+# --- Data Export (V1.1) ---
+
+@router.get("/users/{user_id}/export", summary="导出用户数据")
+async def export_user_data(
+    user_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """V1.1: Export all user data as a JSON package."""
+    if current_user.id != user_id:
+        raise HTTPException(403, "Access denied")
+
+    # Gather all session data
+    sessions_q = await db.execute(
+        select(Session).where(
+            Session.user_id == user_id,
+            Session.status == "completed",
+        ).order_by(Session.started_at.desc()).limit(50)
+    )
+    sessions_data = []
+    for sess in sessions_q.scalars().all():
+        utt_q = await db.execute(
+            select(Utterance).where(Utterance.session_id == sess.id)
+        )
+        sessions_data.append({
+            "session_id": str(sess.id),
+            "scene_id": sess.scene_id,
+            "difficulty": sess.difficulty,
+            "started_at": sess.started_at.isoformat() if sess.started_at else None,
+            "duration_seconds": sess.duration_seconds,
+            "utterances": [{"speaker": u.speaker, "text": u.text} for u in utt_q.scalars().all()],
+        })
+
+    return {
+        "user_id": str(user_id),
+        "username": current_user.username,
+        "email": current_user.email,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "sessions": sessions_data,
+    }
+
+
 # --- Achievements ---
 
 @router.get(

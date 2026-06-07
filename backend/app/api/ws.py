@@ -623,14 +623,21 @@ async def websocket_endpoint(websocket: WebSocket):
                         sequence_counter += 1
                         ai_utt = await _store_utterance(session.id, "ai", opening_line, sequence_counter)
 
+                # Negotiate config per V1.1 spec
+                client_config = payload.get("config", {})
+                negotiated = {
+                    "audio_format": client_config.get("audio_format", "pcm_s16le"),
+                    "tts_voice": client_config.get("tts_voice", "en-US-JennyNeural"),
+                }
                 await websocket.send_json({
-                    "type": "session_started",
+                    "type": "session_ready",
                     "payload": {
                         "session_id": str(session.id),
                         "ai_first_message": {
                             "utterance_id": str(ai_utt.id) if ai_utt else "",
                             "text": opening_line,
                         },
+                        "negotiated_config": negotiated,
                     },
                 })
 

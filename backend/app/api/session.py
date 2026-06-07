@@ -180,6 +180,30 @@ async def get_messages(
     ]
 
 
+@router.delete("/{session_id}/audio", summary="删除会话音频数据")
+async def delete_session_audio(
+    session_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """V1.1: Delete audio data for a session (privacy compliance)."""
+    result = await db.execute(
+        select(Session).where(Session.id == session_id, Session.user_id == user.id)
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Clear audio URLs from utterances
+    utt_result = await db.execute(
+        select(Utterance).where(Utterance.session_id == session_id)
+    )
+    for u in utt_result.scalars().all():
+        u.audio_url = None
+        u.tts_audio_url = None
+    await db.commit()
+    return {"status": "deleted", "session_id": str(session_id)}
+
+
 @router.get("/history", response_model=list[SessionHistory])
 async def list_history(
     user: User = Depends(get_current_user),

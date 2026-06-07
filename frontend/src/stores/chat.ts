@@ -132,7 +132,7 @@ export const useChatStore = defineStore('chat', () => {
             break;
           }
 
-          case 'session_started': {
+          case 'session_ready': {
             connectionStatus.value = { connected: true, connecting: false, error: null };
             // Sync session ID from server (in case server reused or created a new one)
             if (payload.session_id) {

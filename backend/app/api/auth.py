@@ -73,3 +73,13 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
 @router.get("/me", response_model=UserResponse)
 async def get_me(user: User = Depends(get_current_user)):
     return user
+
+
+@router.post("/refresh", response_model=LoginResponse)
+async def refresh_token(user: User = Depends(get_current_user)):
+    """V1.1: Refresh JWT token before expiry."""
+    token = create_access_token(data={"sub": str(user.id)})
+    return LoginResponse(
+        access_token=token,
+        user=UserResponse.model_validate(user),
+    )
