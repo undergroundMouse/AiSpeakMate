@@ -53,9 +53,9 @@
               :title="'播放我的录音'"
               @click="chatStore.playMessageAudio(msg)"
             >🔊</button>
-            <!-- Translate button for AI messages -->
+            <!-- Translate button for AI and user messages -->
             <button
-              v-if="msg.role === 'assistant' && !msg.isTemporary"
+              v-if="!msg.isTemporary"
               class="btn-translate"
               :class="{ active: translations[msg.id] }"
               :disabled="translatingId === msg.id"
