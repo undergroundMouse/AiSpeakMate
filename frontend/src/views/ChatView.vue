@@ -68,12 +68,12 @@
 
           <!-- Action buttons row -->
           <div class="msg-actions">
-            <!-- Speaker button: replay AI TTS -->
+            <!-- Speaker button: replay AI TTS (always works regardless of header TTS toggle) -->
             <button
               v-if="msg.role === 'assistant' && !msg.isTemporary"
               class="btn-speaker"
               :title="'播放AI语音'"
-              @click="chatStore.speakText(msg.content)"
+              @click="replayTts(msg.content)"
             >🔊</button>
             <!-- Speaker button: play user recording -->
             <button
@@ -85,7 +85,7 @@
             <!-- Translate button for AI and user messages -->
             <button
               v-if="!msg.isTemporary"
-              class="btn-translate"
+              class="btn-speaker btn-translate"
               :class="{ active: translations[msg.id] }"
               :disabled="translatingId === msg.id"
               @click="toggleTranslate(msg.id, msg.content)"
@@ -193,6 +193,16 @@ import { sceneApi } from '@/api/scene';
 const translations = ref<Record<string, string>>({});
 const translatingId = ref<string | null>(null);
 import apiClient from '@/api/client';
+
+function replayTts(text: string) {
+  // Always speak regardless of header TTS toggle
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = 'en-US';
+  utterance.rate = 0.9;
+  window.speechSynthesis.speak(utterance);
+}
 
 async function toggleTranslate(msgId: string, text: string) {
   // If already translated, toggle off
@@ -636,13 +646,19 @@ onUnmounted(() => {
   flex-wrap: wrap;
 }
 .btn-speaker {
-  padding: 2px 10px;
+  width: 28px;
+  height: 24px;
+  padding: 0;
   border-radius: 4px;
   background: rgba(255,255,255,0.1);
   color: var(--text-secondary);
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   cursor: pointer;
   transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 .btn-speaker:hover {
   background: var(--accent-success);
@@ -657,16 +673,21 @@ onUnmounted(() => {
   color: #000;
 }
 
-/* Translate button */
+/* Translate button — shares btn-speaker base sizing */
 .btn-translate {
-  margin-top: 6px;
-  padding: 2px 10px;
+  width: 28px;
+  height: 24px;
+  padding: 0;
   border-radius: 4px;
   background: rgba(255,255,255,0.1);
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   cursor: pointer;
   transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 .btn-translate:hover:not(:disabled) {
   background: var(--accent-primary);
