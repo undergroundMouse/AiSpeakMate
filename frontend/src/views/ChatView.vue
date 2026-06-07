@@ -81,9 +81,9 @@
             <button
               v-if="!msg.isTemporary"
               class="btn-speaker"
-              :title="isPaused ? '继续播放' : '暂停播放'"
-              @click="togglePause()"
-            >{{ isPaused ? '▶' : '⏸' }}</button>
+              :title="chatStore.isPaused ? '继续播放' : '暂停播放'"
+              @click="chatStore.togglePause()"
+            >{{ chatStore.isPaused ? '▶' : '⏸' }}</button>
             <!-- Translate button for AI and user messages -->
             <button
               v-if="!msg.isTemporary"
@@ -189,17 +189,6 @@ const inputText = ref('');
 const messagesContainer = ref<HTMLElement | null>(null);
 const showSceneInfo = ref(false);
 const sceneDetail = ref<any>(null);
-const isPaused = ref(false);
-
-function togglePause() {
-  if (isPaused.value) {
-    window.speechSynthesis.resume();
-    isPaused.value = false;
-  } else {
-    window.speechSynthesis.pause();
-    isPaused.value = true;
-  }
-}
 import { sceneApi } from '@/api/scene';
 
 // Translation state
@@ -209,12 +198,8 @@ import apiClient from '@/api/client';
 
 function replayTts(text: string) {
   // Always speak regardless of header TTS toggle
-  if (!window.speechSynthesis) return;
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = 'en-US';
-  utterance.rate = 0.9;
-  window.speechSynthesis.speak(utterance);
+  chatStore.stopSpeaking();
+  chatStore.speakText(text);
 }
 
 async function toggleTranslate(msgId: string, text: string) {

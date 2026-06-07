@@ -33,6 +33,7 @@ export const useChatStore = defineStore('chat', () => {
   });
   const isRecording = ref(false);
   const isAiSpeaking = ref(false);
+  const isPaused = ref(false);
   const ttsEnabled = ref(true);
   const currentSessionId = ref<string | null>(null);
   const sceneId = ref<number | null>(null);
@@ -40,6 +41,7 @@ export const useChatStore = defineStore('chat', () => {
   let ws: WebSocket | null = null;
   let messageIdCounter = 0;
   let currentInterruptId: string | null = null;
+  let currentAudio: HTMLAudioElement | null = null;
 
   // --- TTS (Speech Synthesis) ---
   function speakText(text: string) {
@@ -61,11 +63,46 @@ export const useChatStore = defineStore('chat', () => {
     window.speechSynthesis.speak(utterance);
   }
 
+  function pauseAudio() {
+    if (currentAudio && !currentAudio.paused) {
+      currentAudio.pause();
+      isPaused.value = true;
+    }
+    if (window.speechSynthesis && window.speechSynthesis.speaking) {
+      window.speechSynthesis.pause();
+      isPaused.value = true;
+    }
+  }
+
+  function resumeAudio() {
+    if (currentAudio && currentAudio.paused) {
+      currentAudio.play().catch(() => {});
+      isPaused.value = false;
+    }
+    if (window.speechSynthesis && window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
+      isPaused.value = false;
+    }
+  }
+
+  function togglePause() {
+    if (isPaused.value) {
+      resumeAudio();
+    } else {
+      pauseAudio();
+    }
+  }
+
   function stopSpeaking() {
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio = null;
+    }
     if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
     isAiSpeaking.value = false;
+    isPaused.value = false;
   }
 
   function toggleTts() {
@@ -123,8 +160,14 @@ export const useChatStore = defineStore('chat', () => {
               const blob = new Blob([bytes], { type: payload.audio_mime || 'audio/mp3' });
               const url = URL.createObjectURL(blob);
               const audio = new Audio(url);
+              currentAudio = audio;
+              isPaused.value = false;
               audio.play().catch(() => {});
-              audio.onended = () => URL.revokeObjectURL(url);
+              audio.onended = () => {
+                URL.revokeObjectURL(url);
+                currentAudio = null;
+                isPaused.value = false;
+              };
             } else if (payload.text) {
               // Fallback: browser SpeechSynthesis
               speakText(payload.text);
@@ -384,6 +427,7 @@ export const useChatStore = defineStore('chat', () => {
     connectionStatus,
     isRecording,
     isAiSpeaking,
+    isPaused,
     ttsEnabled,
     currentSessionId,
     sceneId,
@@ -395,6 +439,9 @@ export const useChatStore = defineStore('chat', () => {
     playMessageAudio,
     speakText,
     stopSpeaking,
+    pauseAudio,
+    resumeAudio,
+    togglePause,
     toggleTts,
     addTemporaryMessage,
     sendEndSession,
