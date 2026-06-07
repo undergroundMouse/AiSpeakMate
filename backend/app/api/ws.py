@@ -976,10 +976,12 @@ async def _process_user_message(
     })
 
     # TTS audio — generate real audio via Edge-TTS
-    from ..services.tts_service import text_to_speech_base64
+    from ..services.tts_service import text_to_speech_base64, VOICES as TTS_VOICES
+    # Use negotiated voice from session config; default to female if not set
     tts_voice_key = "en-US-female"
     if current_session_id and current_session_id in active_connections:
         tts_voice_key = active_connections[current_session_id].get("tts_voice", "en-US-female")
+    print(f"[TTS] Voice key: {tts_voice_key} -> Edge-TTS: {TTS_VOICES.get(tts_voice_key, 'en-US-JennyNeural')}")
     tts_base64 = await text_to_speech_base64(ai_text, voice=tts_voice_key)
     if tts_base64:
         await websocket.send_json({
