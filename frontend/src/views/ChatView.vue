@@ -593,7 +593,20 @@ onMounted(() => {
   const sessionId = route.params.sessionId as string;
   chatStore.connect(sessionId, auth.token, { sceneId: chatStore.sceneId ?? undefined });
   // Load scene detail for the info panel
-  if (chatStore.sceneId) {
+  const customData = sessionStorage.getItem('activeCustomScene');
+  if (customData) {
+    try {
+      const data = JSON.parse(customData);
+      sceneDetail.value = {
+        name: data.topic || '自定义场景',
+        role_prompt: data.role_prompt || '',
+        opening_line: data.opening_line || '',
+        vocab_list: data.vocab_list || [],
+        sentence_patterns: data.sentence_patterns || [],
+      };
+      // Don't clear immediately — keep for reconnection
+    } catch {}
+  } else if (chatStore.sceneId) {
     sceneApi.getById(chatStore.sceneId).then(s => { sceneDetail.value = s; }).catch(() => {});
   }
 });

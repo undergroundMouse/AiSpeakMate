@@ -169,6 +169,7 @@ export const useChatStore = defineStore('chat', () => {
             audio_format: 'pcm_s16le',
             tts_voice: _getTtsVoiceKey(),
           },
+          custom_scene: JSON.parse(sessionStorage.getItem('activeCustomScene') || 'null'),
         },
       }));
     };

@@ -660,10 +660,18 @@ async def websocket_endpoint(websocket: WebSocket):
                     )
                     session_scene = scene_result.scalar_one_or_none()
 
-                opening_line = (
-                    session_scene.opening_line if session_scene
-                    else "Hello! Let's practice English. What would you like to talk about?"
-                )
+                # Check for custom scene data from client
+                custom_scene = payload.get("custom_scene")
+                if custom_scene and isinstance(custom_scene, dict):
+                    opening_line = custom_scene.get("opening_line") or (
+                        session_scene.opening_line if session_scene
+                        else "Hello! Let's practice English. What would you like to talk about?"
+                    )
+                else:
+                    opening_line = (
+                        session_scene.opening_line if session_scene
+                        else "Hello! Let's practice English. What would you like to talk about?"
+                    )
 
                 # Count existing utterances so sequence starts correctly
                 existing_seq_result = await db.execute(
