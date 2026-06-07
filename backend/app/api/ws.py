@@ -638,11 +638,18 @@ async def websocket_endpoint(websocket: WebSocket):
                 current_session_id = session.id
                 sequence_counter = 0
 
+                # Negotiate config from client request
+                client_config = payload.get("config", {})
+                negotiated = {
+                    "audio_format": client_config.get("audio_format", "pcm_s16le"),
+                    "tts_voice": client_config.get("tts_voice", "en-US-female"),
+                }
+
                 active_connections[session.id] = {
                     "websocket": websocket,
                     "user_id": user_id,
                     "interrupted_responses": set(),
-                    "tts_voice": negotiated.get("tts_voice", "en-US-female"),
+                    "tts_voice": negotiated["tts_voice"],
                 }
 
                 # Resolve the session's scene to get the opening line
@@ -684,12 +691,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         sequence_counter += 1
                         ai_utt = await _store_utterance(session.id, "ai", opening_line, sequence_counter)
 
-                # Negotiate config per V1.1 spec
-                client_config = payload.get("config", {})
-                negotiated = {
-                    "audio_format": client_config.get("audio_format", "pcm_s16le"),
-                    "tts_voice": client_config.get("tts_voice", "en-US-JennyNeural"),
-                }
                 await websocket.send_json({
                     "type": "session_ready",
                     "payload": {
@@ -698,7 +699,10 @@ async def websocket_endpoint(websocket: WebSocket):
                             "utterance_id": str(ai_utt.id) if ai_utt else "",
                             "text": opening_line,
                         },
-                        "negotiated_config": negotiated,
+                        "negotiated_config": {
+                            "audio_format": negotiated["audio_format"],
+                            "tts_voice": negotiated["tts_voice"],
+                        },
                     },
                 })
 
