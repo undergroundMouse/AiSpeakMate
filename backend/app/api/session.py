@@ -135,13 +135,15 @@ async def end_session(
     session.duration_seconds = duration
     await db.commit()
 
-    # Generate progress snapshot and weakness records
+    # Generate progress snapshot, weakness records, and check achievements
     from ..services.progress_service import (
         generate_progress_snapshot,
         update_weakness_records,
     )
+    from ..services.achievement_service import check_and_unlock_achievements
     await generate_progress_snapshot(db, session.id)
     await update_weakness_records(db, session.id)
+    await check_and_unlock_achievements(db, user.id, session.id)
 
     return EndSessionResponse(
         session_id=session.id,

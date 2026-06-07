@@ -561,51 +561,7 @@ async def get_achievements(
     """
     Get the achievement list for current user.
     """
-    # Predefined achievements
-    predefined = [
-        {
-            "key": "first_session",
-            "title": "初次对话",
-            "description": "完成首次AI对话",
-            "icon": "🎙️",
-            "count_needed": 1,
-        },
-        {
-            "key": "ten_sessions",
-            "title": "坚持不懈",
-            "description": "完成10次对话练习",
-            "icon": "🔥",
-            "count_needed": 10,
-        },
-        {
-            "key": "fifty_sessions",
-            "title": "口语达人",
-            "description": "完成50次对话练习",
-            "icon": "⭐",
-            "count_needed": 50,
-        },
-        {
-            "key": "score_80",
-            "title": "发音之星",
-            "description": "单次发音评分达到80分以上",
-            "icon": "🌟",
-            "count_needed": 1,
-        },
-        {
-            "key": "grammar_perfect",
-            "title": "语法大师",
-            "description": "整场对话零语法错误",
-            "icon": "✅",
-            "count_needed": 1,
-        },
-        {
-            "key": "streak_7",
-            "title": "一周全勤",
-            "description": "连续7天打卡练习",
-            "icon": "📅",
-            "count_needed": 7,
-        },
-    ]
+    from ..services.achievement_service import ACHIEVEMENT_DEFS, _calculate_streak
 
     # Count completed sessions
     session_count_result = await db.execute(
@@ -615,6 +571,9 @@ async def get_achievements(
         )
     )
     total_completed = session_count_result.scalar() or 0
+
+    # Calculate streak
+    streak = await _calculate_streak(db, current_user.id)
 
     # Get existing unlocked achievements
     ua_result = await db.execute(
@@ -626,18 +585,14 @@ async def get_achievements(
 
     achievements = []
     total_locked = 0
-    for pdef in predefined:
+    for pdef in ACHIEVEMENT_DEFS:
         ua = unlocked.get(pdef["key"])
         progress = 0.0
-        if pdef["key"] == "first_session":
-            progress = min(total_completed / 1, 1.0) if total_completed > 0 else 0.0
-        elif pdef["key"] == "ten_sessions":
-            progress = min(total_completed / 10, 1.0)
-        elif pdef["key"] == "fifty_sessions":
-            progress = min(total_completed / 50, 1.0)
-        elif pdef["key"] in ("score_80", "grammar_perfect"):
-            progress = 1.0 if ua else 0.0
-        elif pdef["key"] == "streak_7":
+        if pdef["condition_type"] == "sessions_count":
+            progress = min(total_completed / pdef["condition_value"], 1.0)
+        elif pdef["condition_type"] == "streak_days":
+            progress = min(streak / pdef["condition_value"], 1.0)
+        elif pdef["condition_type"] in ("score_threshold", "grammar_zero_errors"):
             progress = 1.0 if ua else 0.0
 
         achievements.append(AchievementInfo(
