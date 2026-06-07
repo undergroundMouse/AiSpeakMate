@@ -47,6 +47,26 @@
         </div>
       </div>
 
+      <!-- Custom scenes -->
+      <div v-if="customScenes.length > 0" style="margin-bottom:8px">
+        <h2 class="section-title">自定义场景</h2>
+        <div class="scene-grid">
+          <div v-for="scene in customScenes" :key="scene.scene_id" class="scene-card" @click="startCustomFromList(scene)">
+            <div class="card-header">
+              <span class="card-icon">✨</span>
+              <h3>{{ scene.name }}</h3>
+            </div>
+            <div class="difficulty-tags">
+              <span v-for="lvl in scene.difficulty_levels" :key="lvl" class="diff" :class="lvl">{{ DIFF_MAP[lvl] || lvl }}</span>
+            </div>
+            <p class="desc">{{ scene.description }}</p>
+            <div class="tags">
+              <span class="tag">自定义</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Empty state -->
       <p v-if="totalScenes === 0 && !loading" style="text-align:center;color:var(--text-secondary);padding:40px 0">
         暂无可用场景
@@ -137,6 +157,7 @@ const customDifficulty = ref('intermediate');
 const customLoading = ref(false);
 const customError = ref('');
 const customSceneData = ref<any>(null);
+const customScenes = ref<any[]>([]); // User-generated scenes displayed in the list
 
 async function createCustomScene() {
   if (!auth.isAuthenticated) { customError.value = '请先登录'; return; }
@@ -148,12 +169,27 @@ async function createCustomScene() {
       difficulty: customDifficulty.value,
     });
     customSceneData.value = res;
+    // Add to custom scenes list for display
+    customScenes.value.push({
+      scene_id: `custom_${Date.now()}`,
+      name: res.topic,
+      description: res.role_prompt,
+      difficulty_levels: [customDifficulty.value],
+      tags: ['custom'],
+      _custom: true,
+      _data: res,
+    });
     showCustomScene.value = false;
   } catch (e: any) {
     customError.value = e?.response?.data?.detail || '场景生成失败';
   } finally { customLoading.value = false; }
 }
 
+async function startCustomFromList(scene: any) {
+  if (!auth.isAuthenticated) return;
+  customSceneData.value = scene._data;
+  await startCustomScene();
+}
 async function startCustomScene() {
   if (!customSceneData.value) return;
   try {
