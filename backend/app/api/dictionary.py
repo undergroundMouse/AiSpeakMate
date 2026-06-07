@@ -12,6 +12,7 @@ class DictResponse(BaseModel):
     phonetic: str = ""
     audio_url: str = ""
     chinese_translation: str = ""  # Chinese meaning summary
+    examples: list[str] = []       # English example sentences
     meanings: list[dict] = []
     phrases: list[dict] = []
 
@@ -44,6 +45,7 @@ async def lookup_word(word: str):
                 data = resp.json()
                 result = _parse_iciba(word, data, result.chinese_translation)
                 if result.meanings:
+                    result.examples = await _fetch_examples(word, client)
                     return result
         except Exception:
             pass
@@ -57,11 +59,74 @@ async def lookup_word(word: str):
             if resp.status_code == 200:
                 data = resp.json()
                 result = _parse_free_dict(word, data, result.chinese_translation)
-                return result
         except Exception:
             pass
 
+    # Always fetch example sentences
+    result.examples = await _fetch_examples(word, client)
+
     return result
+
+
+# Sentence templates for generating examples
+_SENTENCE_PATTERNS = [
+    "I would like {word} please.",
+    "Can I get a {word}?",
+    "The {word} is very good.",
+    "Do you have {word}?",
+    "I need a {word}.",
+    "Where can I find {word}?",
+    "How much is the {word}?",
+    "I love {word}.",
+    "Could you give me {word}?",
+    "Let's talk about {word}.",
+    "Have you tried {word}?",
+    "What kind of {word} do you have?",
+    "I prefer {word}.",
+    "This {word} is delicious.",
+    "Can you recommend a {word}?",
+    "I'm looking for {word}.",
+    "The best {word} I've ever had.",
+    "Would you like some {word}?",
+    "I always order {word}.",
+    "They have great {word} here.",
+]
+
+
+async def _fetch_examples(word: str, client) -> list[str]:
+    """Try to get example sentences, fall back to templates."""
+    examples = []
+
+    # Try dictionary API for real examples
+    try:
+        resp = await client.get(
+            f"https://api.dictionaryapi.dev/api/v2/entries/en/{word}",
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            for entry in data:
+                for meaning in entry.get("meanings", []):
+                    for d in meaning.get("definitions", []):
+                        if d.get("example") and d["example"] not in examples:
+                            examples.append(d["example"])
+                        if len(examples) >= 3:
+                            return examples[:3]
+    except Exception:
+        pass
+
+    # Generate template-based examples if not enough real ones
+    need = 3 - len(examples)
+    if need > 0:
+        import random
+        rnd = random.Random(word)
+        templates = rnd.sample(_SENTENCE_PATTERNS, min(need, len(_SENTENCE_PATTERNS)))
+        for tmpl in templates:
+            ex = tmpl.replace("{word}", word)
+            if ex not in examples:
+                examples.append(ex)
+
+    return examples[:3]
 
 
 def _parse_iciba(word: str, data: dict, cn_trans: str = "") -> DictResponse:

@@ -192,6 +192,13 @@
               </span>
             </p>
           </div>
+          <!-- Example sentences -->
+          <div v-if="dictData.examples?.length" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--bg-card)">
+            <h4 style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:6px">📝 例句</h4>
+            <div v-for="(ex, ei) in dictData.examples" :key="ei" style="font-size:0.82rem;color:var(--text-primary);margin-bottom:4px;padding:4px 8px;background:var(--bg-primary);border-radius:4px;line-height:1.5">
+              <span style="color:var(--accent-primary);font-weight:600;margin-right:6px">{{ ei + 1 }}.</span>{{ ex }}
+            </div>
+          </div>
           <!-- Phrases -->
           <div v-if="dictData.phrases?.length" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--bg-card)">
             <h4 style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:6px">常用短语</h4>
@@ -338,6 +345,7 @@ async function lookupWord(word: string) {
         })) || [],
       })) || [],
       phrases: data.phrases || [],
+      examples: data.examples || [],
     };
   } catch {
     dictError.value = `未找到 "${word}" 的释义`;
