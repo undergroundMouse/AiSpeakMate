@@ -103,15 +103,25 @@
 
           <!-- Corrections for user messages -->
           <div v-if="msg.role === 'user' && msg.corrections?.length" class="corrections">
-            <div class="correction-title">修改建议</div>
+            <div class="correction-title">修改建议 ({{ msg.corrections.length }})</div>
             <div v-for="(corr, ci) in msg.corrections" :key="ci" class="correction-item">
-              <span class="corr-type" :class="corr.type">
-                {{ CORRECTION_LABELS[corr.type] || corr.type }}
-              </span>
-              <span class="corr-original">{{ corr.original }}</span>
-              &rarr;
-              <span class="corr-corrected">{{ corr.corrected }}</span>
-              <p class="corr-explanation">{{ corr.explanation }}</p>
+              <div class="corr-header">
+                <span class="corr-type" :class="corr.type">
+                  {{ CORRECTION_LABELS[corr.type] || corr.type }}
+                </span>
+                <span class="corr-severity" :class="'sev-' + (corr.severity || 'medium')">
+                  {{ corr.severity === 'high' ? '严重' : corr.severity === 'medium' ? '中等' : '轻微' }}
+                </span>
+              </div>
+              <div class="corr-body">
+                <span class="corr-original">{{ corr.original }}</span>
+                &rarr;
+                <span class="corr-corrected">{{ corr.corrected }}</span>
+              </div>
+              <p v-if="corr.correctedSentence" class="corr-sentence">
+                修正后: {{ corr.correctedSentence }}
+              </p>
+              <p v-if="corr.explanation" class="corr-explanation">{{ corr.explanation }}</p>
             </div>
           </div>
 
@@ -729,6 +739,23 @@ onUnmounted(() => {
 .corr-type.grammar { color: var(--accent-warning); }
 .corr-type.pronunciation { color: var(--accent-primary); }
 .corr-type.vocabulary { color: var(--accent-success); }
+.corr-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.corr-severity {
+  font-size: 0.65rem;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.corr-severity.sev-low { background: rgba(74,222,128,0.12); color: #4ade80; }
+.corr-severity.sev-medium { background: rgba(251,191,36,0.12); color: #fbbf24; }
+.corr-severity.sev-high { background: rgba(248,113,113,0.12); color: #f87171; }
+.corr-body {
+  margin-bottom: 4px;
+}
 .corr-original {
   text-decoration: line-through;
   opacity: 0.7;
@@ -737,10 +764,19 @@ onUnmounted(() => {
   color: var(--accent-success);
   font-weight: 600;
 }
+.corr-sentence {
+  font-size: 0.78rem;
+  color: var(--accent-primary);
+  margin-bottom: 2px;
+  padding: 2px 8px;
+  background: rgba(56,189,248,0.08);
+  border-radius: 4px;
+}
 .corr-explanation {
   font-size: 0.75rem;
-  opacity: 0.65;
+  opacity: 0.7;
   margin-top: 2px;
+  font-style: italic;
 }
 
 .pron-score {

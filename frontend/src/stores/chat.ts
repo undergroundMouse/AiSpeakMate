@@ -11,6 +11,8 @@ export interface ChatMessage {
     original: string;
     corrected: string;
     explanation: string;
+    correctedSentence?: string;
+    severity?: string;
     type: 'grammar' | 'pronunciation' | 'vocabulary';
   }>;
   pronunciation_score?: number;
@@ -259,7 +261,9 @@ export const useChatStore = defineStore('chat', () => {
                 original: payload.original_text || '',
                 corrected: payload.correction || '',
                 explanation: payload.hint || '',
-                type: 'grammar',
+                correctedSentence: payload.corrected_sentence || '',
+                severity: payload.severity || 'medium',
+                type: payload.hint_type === 'expression' ? 'vocabulary' : 'grammar',
               });
             }
             break;
