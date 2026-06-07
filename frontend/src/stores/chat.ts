@@ -46,7 +46,7 @@ export const useChatStore = defineStore('chat', () => {
   let currentAudio: HTMLAudioElement | null = null;
 
   // --- TTS (Speech Synthesis) ---
-  function _getTtsVoice(): string {
+  function _getTtsVoiceName(): string {
     const v = localStorage.getItem('ttsVoice') || 'en-US-female';
     const map: Record<string, string> = {
       'en-US-female': 'en-US-JennyNeural',
@@ -57,6 +57,10 @@ export const useChatStore = defineStore('chat', () => {
     return map[v] || 'en-US-JennyNeural';
   }
 
+  function _getTtsVoiceKey(): string {
+    return localStorage.getItem('ttsVoice') || 'en-US-female';
+  }
+
   function speakText(text: string) {
     if (!ttsEnabled.value) return;
     if (!window.speechSynthesis) return;
@@ -64,14 +68,15 @@ export const useChatStore = defineStore('chat', () => {
     // Stop any ongoing speech (interrupt)
     window.speechSynthesis.cancel();
 
+    const voiceName = _getTtsVoiceName();
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = _getTtsVoice().startsWith('en-GB') ? 'en-GB' : 'en-US';
+    utterance.lang = voiceName.startsWith('en-GB') ? 'en-GB' : 'en-US';
     utterance.rate = 0.9;
     utterance.pitch = 1.0;
 
-    // Try to set voice if available
+    // Match browser voice to selected Edge-TTS voice
     const voices = window.speechSynthesis.getVoices();
-    const preferredVoice = voices.find(v => v.name.includes(_getTtsVoice().split('-')[2] || ''));
+    const preferredVoice = voices.find(v => v.name === voiceName || v.name.includes(voiceName.split('-')[2] || ''));
     if (preferredVoice) utterance.voice = preferredVoice;
 
     utterance.onstart = () => { isAiSpeaking.value = true; };
@@ -153,7 +158,7 @@ export const useChatStore = defineStore('chat', () => {
           scene_id: sceneId.value,
           config: {
             audio_format: 'pcm_s16le',
-            tts_voice: _getTtsVoice(),
+            tts_voice: _getTtsVoiceKey(),
           },
         },
       }));

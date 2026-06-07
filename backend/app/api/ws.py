@@ -642,6 +642,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     "websocket": websocket,
                     "user_id": user_id,
                     "interrupted_responses": set(),
+                    "tts_voice": negotiated.get("tts_voice", "en-US-female"),
                 }
 
                 # Resolve the session's scene to get the opening line
@@ -972,7 +973,10 @@ async def _process_user_message(
 
     # TTS audio — generate real audio via Edge-TTS
     from ..services.tts_service import text_to_speech_base64
-    tts_base64 = await text_to_speech_base64(ai_text)
+    tts_voice_key = "en-US-female"
+    if current_session_id and current_session_id in active_connections:
+        tts_voice_key = active_connections[current_session_id].get("tts_voice", "en-US-female")
+    tts_base64 = await text_to_speech_base64(ai_text, voice=tts_voice_key)
     if tts_base64:
         await websocket.send_json({
             "type": "tts_audio",
