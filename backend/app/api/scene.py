@@ -132,6 +132,32 @@ async def get_random_scene(
     )
 
 
+@router.get("/custom")
+async def list_custom_scenes(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all custom scenes created by the current user."""
+    result = await db.execute(
+        select(CustomScene)
+        .where(CustomScene.user_id == user.id)
+        .order_by(CustomScene.created_at.desc())
+        .limit(20)
+    )
+    scenes = result.scalars().all()
+    return [
+        {
+            "custom_scene_id": str(s.id),
+            "topic": s.topic,
+            "role_prompt": s.prompt_snapshot or f"You are {s.role or 'a conversation partner'}. Topic: {s.topic}.",
+            "opening_line": f"Let's talk about {s.topic}. What do you think?",
+            "difficulty": s.difficulty or "intermediate",
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+        }
+        for s in scenes
+    ]
+
+
 @router.get("/{scene_id}", response_model=SceneDetail)
 async def get_scene_detail(
     scene_id: int,
@@ -183,32 +209,6 @@ async def get_scene_detail(
         difficulty_settings=scene.difficulty_settings,
         suggested_duration_minutes=duration,
     )
-
-
-@router.get("/custom")
-async def list_custom_scenes(
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """List all custom scenes created by the current user."""
-    result = await db.execute(
-        select(CustomScene)
-        .where(CustomScene.user_id == user.id)
-        .order_by(CustomScene.created_at.desc())
-        .limit(20)
-    )
-    scenes = result.scalars().all()
-    return [
-        {
-            "custom_scene_id": str(s.id),
-            "topic": s.topic,
-            "role_prompt": s.prompt_snapshot or f"You are {s.role or 'a conversation partner'}. Topic: {s.topic}.",
-            "opening_line": f"Let's talk about {s.topic}. What do you think?",
-            "difficulty": s.difficulty or "intermediate",
-            "created_at": s.created_at.isoformat() if s.created_at else None,
-        }
-        for s in scenes
-    ]
 
 
 @router.post("/custom", status_code=status.HTTP_201_CREATED)
