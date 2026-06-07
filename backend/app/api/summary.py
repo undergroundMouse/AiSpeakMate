@@ -1,4 +1,3 @@
-import random
 import uuid
 from datetime import datetime, timezone
 
@@ -379,72 +378,107 @@ async def get_user_progress(
 ):
     """
     Get overall learning progress for the current user.
+    Queries real UserProgressSnapshot, UserWeaknessRecord, and Session data.
     """
-    # Count total sessions
-    session_count_result = await db.execute(
-        select(func.count(Session.id)).where(
+    from datetime import date, timedelta
+    from ..models.progress import UserProgressSnapshot
+
+    today = date.today()
+
+    # Count total completed sessions and sum real duration
+    session_agg_result = await db.execute(
+        select(
+            func.count(Session.id),
+            func.coalesce(func.sum(Session.duration_seconds), 0),
+        ).where(
             Session.user_id == current_user.id,
             Session.status == "completed",
         )
     )
-    total_sessions = session_count_result.scalar() or 0
+    total_sessions, total_duration = session_agg_result.one()
 
-    # TODO: In production, calculate real duration from utterances
-    total_duration = total_sessions * random.randint(5, 15) * 60  # approximate seconds
+    # Query real snapshots (last 7, ordered by date descending)
+    snap_result = await db.execute(
+        select(UserProgressSnapshot)
+        .where(UserProgressSnapshot.user_id == current_user.id)
+        .order_by(UserProgressSnapshot.snapshot_date.desc())
+        .limit(7)
+    )
+    snapshots = [
+        ProgressSnapshot(
+            snapshot_date=s.snapshot_date,
+            total_score=s.total_score,
+            dimension_scores=s.dimension_scores,
+            session_count=s.session_count,
+            total_duration_seconds=s.total_duration_seconds,
+        )
+        for s in snap_result.scalars().all()
+    ]
 
-    overall_score = random.randint(45, 90)
+    # Compute overall score from latest snapshot or default
+    if snapshots:
+        overall_score = snapshots[0].total_score
+    else:
+        overall_score = 50
     rating = _get_rating(overall_score)
 
-    # Generate mock snapshots
-    from datetime import date, timedelta
-    today = date.today()
-    snapshots = []
-    for i in range(7):
-        d = today - timedelta(days=i * 7)
-        snapshots.append(ProgressSnapshot(
-            snapshot_date=d,
-            total_score=min(100, overall_score - random.randint(-5, 3) * (7 - i)),
-            dimension_scores={
-                "fluency": random.randint(30, 80) + (7 - i) * 2,
-                "vocabulary": random.randint(30, 80) + (7 - i) * 2,
-                "grammar": random.randint(30, 80) + (7 - i) * 2,
-                "pronunciation": random.randint(30, 80) + (7 - i) * 2,
-            },
-            session_count=(i + 1),
-            total_duration_seconds=random.randint(300, 1800),
-        ))
-
-    # Mock weaknesses
+    # Query real weaknesses (current month)
+    period_start = today.replace(day=1)
+    weakness_result = await db.execute(
+        select(UserWeaknessRecord)
+        .where(
+            UserWeaknessRecord.user_id == current_user.id,
+            UserWeaknessRecord.period_end >= period_start,
+        )
+        .order_by(UserWeaknessRecord.error_count.desc())
+        .limit(10)
+    )
     weaknesses = [
         WeaknessRecord(
-            period_start=today - timedelta(days=30),
-            period_end=today,
-            category="pronunciation",
-            item="/θ/",
-            error_count=12,
-            trend="falling",
-        ),
-        WeaknessRecord(
-            period_start=today - timedelta(days=30),
-            period_end=today,
-            category="grammar",
-            item="过去时",
-            error_count=8,
-            trend="stable",
-        ),
+            period_start=w.period_start,
+            period_end=w.period_end,
+            category=w.category,
+            item=w.item,
+            error_count=w.error_count,
+            trend=w.trend,
+        )
+        for w in weakness_result.scalars().all()
     ]
 
-    strengths = [
-        {"area": "流利度", "score": random.randint(70, 90), "trend": "rising"},
-        {"area": "词汇量", "score": random.randint(60, 85), "trend": "rising"},
-    ]
+    # Derive strengths from snapshot dimensions with highest scores
+    strengths: list[dict] = []
+    if snapshots:
+        latest_dims = snapshots[0].dimension_scores
+        dim_labels = {
+            "fluency": "流利度",
+            "vocabulary": "词汇量",
+            "grammar": "语法",
+            "pronunciation": "发音",
+            "interaction": "互动",
+        }
+        sorted_dims = sorted(latest_dims.items(), key=lambda x: x[1], reverse=True)
+        for dim_key, score in sorted_dims[:3]:
+            if score >= 60:
+                # Check trend from previous snapshot if available
+                trend = "stable"
+                if len(snapshots) >= 2:
+                    prev_score = snapshots[1].dimension_scores.get(dim_key, score)
+                    if score > prev_score + 3:
+                        trend = "rising"
+                    elif score < prev_score - 3:
+                        trend = "falling"
+                strengths.append({
+                    "area": dim_labels.get(dim_key, dim_key),
+                    "score": score,
+                    "trend": trend,
+                })
 
     return UserProgressResponse(
         user_id=current_user.id,
         overall_rating=rating,
         total_score=overall_score,
-        total_sessions=total_sessions,
-        total_hours=round(total_duration / 3600, 1),
+        total_sessions=total_sessions or 0,
+        total_hours=round((total_duration or 0) / 3600, 1),
         snapshots=snapshots,
         weaknesses=weaknesses,
         strengths=strengths,
