@@ -185,7 +185,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 ai_utt = await _store_utterance(session.id, "ai", opening_line, sequence_counter)
 
                 await websocket.send_json({
-                    "type": "session_ready",
+                    "type": "session_started",
                     "payload": {
                         "session_id": str(session.id),
                         "ai_first_message": {
@@ -220,71 +220,26 @@ async def websocket_endpoint(websocket: WebSocket):
                     })
 
                 if is_end and asr_text:
-                    # send final ASR result
+                    await _process_user_message(
+                        websocket, db, current_session_id, asr_text, sequence_counter
+                    )
+                    sequence_counter += 2
+
+            # --- USER MESSAGE (text-only, no audio) ---
+            elif msg_type == "user_message":
+                if not current_session_id:
                     await websocket.send_json({
-                        "type": "asr_final",
-                        "payload": {
-                            "session_id": str(current_session_id),
-                            "text": asr_text,
-                            "confidence": 0.95,
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                        },
+                        "type": "error",
+                        "payload": {"code": 1001, "message": "No active session"},
                     })
+                    continue
 
-                    # store user utterance
-                    sequence_counter += 1
-                    await _store_utterance(current_session_id, "user", asr_text, sequence_counter)
-
-                    # pronunciation feedback (simulated)
-                    await websocket.send_json({
-                        "type": "pronunciation_feedback",
-                        "payload": {
-                            "sentence_text": asr_text,
-                            "overall_score": 75,
-                            "word_scores": [],
-                            "brief_tip": "Good effort! Keep practicing your intonation.",
-                        },
-                    })
-
-                    # grammar hint (simulated - only for obvious patterns)
-                    grammar_hint = _get_grammar_hint(asr_text)
-                    if grammar_hint:
-                        await websocket.send_json({
-                            "type": "grammar_hint",
-                            "payload": grammar_hint,
-                        })
-
-                    # generate LLM response
-                    data = await _get_session_data(db, current_session_id)
-                    scene_data = data["scene_data"] if data else None
-                    ai_text = _simulate_llm_response(asr_text, scene_data)
-
-                    sequence_counter += 1
-                    ai_utt = await _store_utterance(current_session_id, "ai", ai_text, sequence_counter)
-
-                    resp_id = str(uuid.uuid4())
-                    await websocket.send_json({
-                        "type": "llm_response_text",
-                        "payload": {
-                            "session_id": str(current_session_id),
-                            "text": ai_text,
-                            "utterance_id": str(ai_utt.id),
-                            "is_final": True,
-                            "interrupt_id": resp_id,
-                        },
-                    })
-
-                    # TTS audio stub
-                    await websocket.send_json({
-                        "type": "tts_audio",
-                        "payload": {
-                            "session_id": str(current_session_id),
-                            "stream_id": f"tts_{resp_id}",
-                            "interrupt_id": resp_id,
-                            "is_end": True,
-                            "text": ai_text,
-                        },
-                    })
+                text = (payload.get("text") or "").strip()
+                if text:
+                    await _process_user_message(
+                        websocket, db, current_session_id, text, sequence_counter
+                    )
+                    sequence_counter += 2
 
             # --- INTERRUPT ---
             elif msg_type == "interrupt":
@@ -346,6 +301,79 @@ async def websocket_endpoint(websocket: WebSocket):
         if current_session_id:
             active_connections.pop(current_session_id, None)
         await db.close()
+
+
+async def _process_user_message(
+    websocket: WebSocket,
+    db: AsyncSession,
+    current_session_id: uuid.UUID,
+    asr_text: str,
+    sequence_counter: int,
+):
+    """Process a final user utterance: store, evaluate, and generate AI response."""
+    # send final ASR result
+    await websocket.send_json({
+        "type": "asr_final",
+        "payload": {
+            "session_id": str(current_session_id),
+            "text": asr_text,
+            "confidence": 0.95,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        },
+    })
+
+    # store user utterance
+    await _store_utterance(current_session_id, "user", asr_text, sequence_counter + 1)
+
+    # pronunciation feedback (simulated)
+    await websocket.send_json({
+        "type": "pronunciation_feedback",
+        "payload": {
+            "sentence_text": asr_text,
+            "overall_score": 75,
+            "word_scores": [],
+            "brief_tip": "Good effort! Keep practicing your intonation.",
+        },
+    })
+
+    # grammar hint (simulated - only for obvious patterns)
+    grammar_hint = _get_grammar_hint(asr_text)
+    if grammar_hint:
+        await websocket.send_json({
+            "type": "grammar_hint",
+            "payload": grammar_hint,
+        })
+
+    # generate LLM response
+    data = await _get_session_data(db, current_session_id)
+    scene_data = data["scene_data"] if data else None
+    ai_text = _simulate_llm_response(asr_text, scene_data)
+
+    ai_utt = await _store_utterance(current_session_id, "ai", ai_text, sequence_counter + 2)
+
+    resp_id = str(uuid.uuid4())
+    await websocket.send_json({
+        "type": "llm_response_text",
+        "payload": {
+            "session_id": str(current_session_id),
+            "text": ai_text,
+            "utterance_id": str(ai_utt.id),
+            "is_final": True,
+            "interrupt_id": resp_id,
+        },
+    })
+
+    # TTS audio stub
+    await websocket.send_json({
+        "type": "tts_audio",
+        "payload": {
+            "session_id": str(current_session_id),
+            "stream_id": f"tts_{resp_id}",
+            "interrupt_id": resp_id,
+            "is_end": True,
+            "text": ai_text,
+        },
+    })
 
 
 def _get_grammar_hint(text: str) -> dict | None:
