@@ -14,6 +14,14 @@
         class="search-input"
         @input="onSearch"
       />
+      <button
+        class="btn-random"
+        :disabled="randomLoading"
+        @click="goToRandomScene"
+        title="随机选择一个场景开始练习"
+      >
+        {{ randomLoading ? '🎲 匹配中...' : '🎲 随机挑战' }}
+      </button>
     </div>
 
     <!-- Loading -->
@@ -64,6 +72,7 @@ import { computed, ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useSceneStore } from '@/stores/scene';
 import { useAuthStore } from '@/stores/auth';
+import { sceneApi } from '@/api/scene';
 import type { CategoryWithScenes } from '@/api/scene';
 
 const DIFFICULTY_MAP: Record<string, string> = {
@@ -78,6 +87,7 @@ const router = useRouter();
 
 const searchQuery = ref('');
 const errorMsg = ref('');
+const randomLoading = ref(false);
 
 const allScenes = computed(() =>
   sceneStore.categories.flatMap((c) => c.scenes)
@@ -130,6 +140,22 @@ function goToScene(id: number) {
     return;
   }
   router.push(`/scenes/${id}`);
+}
+
+async function goToRandomScene() {
+  if (!auth.isAuthenticated) {
+    router.push('/');
+    return;
+  }
+  randomLoading.value = true;
+  try {
+    const scene = await sceneApi.getRandom();
+    router.push(`/scenes/${scene.scene_id}`);
+  } catch (e: any) {
+    errorMsg.value = '获取随机场景失败，请稍后重试';
+  } finally {
+    randomLoading.value = false;
+  }
 }
 
 onMounted(() => {
@@ -189,6 +215,24 @@ onMounted(() => {
   background: var(--bg-secondary);
   color: var(--text-primary);
   font-size: 0.9rem;
+}
+.btn-random {
+  padding: 10px 18px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--accent-warning), #f97316);
+  color: #0f172a;
+  font-size: 0.9rem;
+  font-weight: 700;
+  white-space: nowrap;
+  transition: opacity 0.2s, transform 0.15s;
+}
+.btn-random:hover:not(:disabled) {
+  opacity: 0.88;
+  transform: scale(1.03);
+}
+.btn-random:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .status {

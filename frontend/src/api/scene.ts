@@ -68,6 +68,12 @@ export const sceneApi = {
     return apiClient.get<SceneDetail>(`/scenes/${id}`).then((res) => res.data);
   },
 
+  getRandom(difficulty?: string) {
+    return apiClient
+      .get<SceneDetail>('/scenes/random', { params: difficulty ? { difficulty } : {} })
+      .then((res) => res.data);
+  },
+
   createCustom(data: CustomSceneRequest) {
     return apiClient.post<CustomSceneResponse>('/scenes/custom', data).then((res) => res.data);
   },

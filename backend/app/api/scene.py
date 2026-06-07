@@ -65,6 +65,66 @@ async def list_scenes(db: AsyncSession = Depends(get_db)):
     return await _build_scene_list(db)
 
 
+@router.get("/random", response_model=SceneDetail)
+async def get_random_scene(
+    difficulty: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return a random active scene, optionally filtered by difficulty level."""
+    from sqlalchemy import func
+
+    query = select(Scene).where(Scene.is_active == True)
+    if difficulty:
+        # Filter scenes whose difficulty_levels JSONB array contains the requested level
+        query = query.where(Scene.difficulty_levels.contains([difficulty]))
+
+    result = await db.execute(
+        query.order_by(func.random()).limit(1)
+    )
+    scene = result.scalar_one_or_none()
+    if scene is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active scene found",
+        )
+
+    # Load relationships
+    await db.refresh(scene, ["vocabulary", "sentence_patterns"])
+
+    vocab_list = [
+        VocabItem(
+            word=v.word,
+            phonetic=v.phonetic,
+            audio_url=v.audio_url,
+            translation=v.translation,
+        )
+        for v in scene.vocabulary
+    ]
+    pattern_list = [
+        SentencePatternItem(
+            pattern=p.pattern,
+            translation=p.translation,
+            example=p.example,
+        )
+        for p in scene.sentence_patterns
+    ]
+
+    duration = None
+    if scene.suggested_duration:
+        duration = scene.suggested_duration // 60
+
+    return SceneDetail(
+        scene_id=scene.id,
+        name=scene.name,
+        role_prompt=scene.role_prompt,
+        opening_line=scene.opening_line,
+        vocab_list=vocab_list,
+        sentence_patterns=pattern_list,
+        difficulty_settings=scene.difficulty_settings,
+        suggested_duration_minutes=duration,
+    )
+
+
 @router.get("/{scene_id}", response_model=SceneDetail)
 async def get_scene_detail(
     scene_id: int,
