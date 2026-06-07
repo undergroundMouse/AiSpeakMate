@@ -152,8 +152,18 @@ const customRole = ref('');
 const customDesc = ref('');
 const customLoading = ref(false);
 const customError = ref('');
+const STORAGE_KEY = 'aispeakmate_custom_scenes';
+
+function loadCustomScenes(): any[] {
+  try { return JSON.parse(sessionStorage.getItem(STORAGE_KEY) || '[]'); }
+  catch { return []; }
+}
+function saveCustomScenes(scenes: any[]) {
+  sessionStorage.setItem(STORAGE_KEY, JSON.stringify(scenes));
+}
+
 const customSceneData = ref<any>(null);
-const customScenes = ref<any[]>([]); // User-generated scenes displayed in the list
+const customScenes = ref<any[]>(loadCustomScenes());
 
 async function createCustomScene() {
   if (!auth.isAuthenticated) { customError.value = '请先登录'; return; }
@@ -177,6 +187,7 @@ async function createCustomScene() {
       _data: res,
     };
     customScenes.value.push(newScene);
+    saveCustomScenes(customScenes.value);
     showCustomScene.value = false;
   } catch (e: any) {
     customError.value = e?.response?.data?.detail || '场景生成失败';
