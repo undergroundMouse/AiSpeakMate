@@ -282,37 +282,64 @@ async def websocket_endpoint(websocket: WebSocket):
             if msg_type == "start_session":
                 scene_id_raw = payload.get("scene_id")
                 difficulty = payload.get("difficulty", "beginner")
+                client_session_id = payload.get("session_id")
 
-                if not scene_id_raw:
+                # If the client already created a session via HTTP, reuse it
+                if client_session_id:
+                    try:
+                        existing_session_id = uuid.UUID(client_session_id)
+                        session_result = await db.execute(
+                            select(Session).where(
+                                Session.id == existing_session_id,
+                                Session.user_id == user_id,
+                                Session.status == "active",
+                            )
+                        )
+                        session = session_result.scalar_one_or_none()
+                    except (ValueError, TypeError):
+                        session = None
+                else:
+                    session = None
+
+                # If no existing session or scene_id provided, look up the scene
+                if session is None and scene_id_raw:
+                    try:
+                        scene_result = await db.execute(
+                            select(Scene).where(Scene.id == int(scene_id_raw))
+                        )
+                        scene = scene_result.scalar_one_or_none()
+                    except (ValueError, TypeError):
+                        await websocket.send_json({
+                            "type": "error",
+                            "payload": {"code": 1001, "message": "Invalid scene_id"},
+                        })
+                        continue
+
+                    if scene is None:
+                        await websocket.send_json({
+                            "type": "error",
+                            "payload": {"code": 1004, "message": "Scene not found"},
+                        })
+                        continue
+
+                    # Create a new session server-side
+                    session = Session(
+                        user_id=user_id,
+                        scene_id=scene.id,
+                        difficulty=difficulty,
+                        status="active",
+                        started_at=datetime.now(timezone.utc),
+                    )
+                    db.add(session)
+                    await db.commit()
+                    await db.refresh(session)
+
+                if session is None:
                     await websocket.send_json({
                         "type": "error",
-                        "payload": {"code": 1001, "message": "Missing scene_id"},
+                        "payload": {"code": 1001, "message": "Missing scene_id and no valid session_id"},
                     })
                     continue
-
-                # Look up the scene to get role_prompt and opening_line
-                scene_result = await db.execute(
-                    select(Scene).where(Scene.id == int(scene_id_raw))
-                )
-                scene = scene_result.scalar_one_or_none()
-                if scene is None:
-                    await websocket.send_json({
-                        "type": "error",
-                        "payload": {"code": 1004, "message": "Scene not found"},
-                    })
-                    continue
-
-                # Create a new session server-side
-                session = Session(
-                    user_id=user_id,
-                    scene_id=scene.id,
-                    difficulty=difficulty,
-                    status="active",
-                    started_at=datetime.now(timezone.utc),
-                )
-                db.add(session)
-                await db.commit()
-                await db.refresh(session)
 
                 current_session_id = session.id
                 sequence_counter = 0
@@ -323,18 +350,51 @@ async def websocket_endpoint(websocket: WebSocket):
                     "interrupted_responses": set(),
                 }
 
-                opening_line = scene.opening_line or "Hello! Let's practice English. What would you like to talk about?"
+                # Resolve the session's scene to get the opening line
+                session_scene = None
+                if session.scene_id:
+                    scene_result = await db.execute(
+                        select(Scene).where(Scene.id == session.scene_id)
+                    )
+                    session_scene = scene_result.scalar_one_or_none()
 
-                # store AI opening
-                sequence_counter += 1
-                ai_utt = await _store_utterance(session.id, "ai", opening_line, sequence_counter)
+                opening_line = (
+                    session_scene.opening_line if session_scene
+                    else "Hello! Let's practice English. What would you like to talk about?"
+                )
+
+                # Count existing utterances so sequence starts correctly
+                existing_seq_result = await db.execute(
+                    select(Utterance).where(Utterance.session_id == session.id)
+                )
+                existing_utt_count = len(existing_seq_result.scalars().all())
+
+                # Only store AI opening line if this is a fresh session (no utterances yet)
+                ai_utt = None
+                if existing_utt_count == 0:
+                    sequence_counter = 1
+                    ai_utt = await _store_utterance(session.id, "ai", opening_line, sequence_counter)
+                else:
+                    sequence_counter = existing_utt_count
+                    # Retrieve the first AI utterance if available
+                    first_ai = await db.execute(
+                        select(Utterance)
+                        .where(Utterance.session_id == session.id, Utterance.speaker == "ai")
+                        .order_by(Utterance.sequence)
+                        .limit(1)
+                    )
+                    ai_utt = first_ai.scalar_one_or_none()
+                    if ai_utt is None:
+                        # Fallback: create an opening
+                        sequence_counter += 1
+                        ai_utt = await _store_utterance(session.id, "ai", opening_line, sequence_counter)
 
                 await websocket.send_json({
                     "type": "session_started",
                     "payload": {
                         "session_id": str(session.id),
                         "ai_first_message": {
-                            "utterance_id": str(ai_utt.id),
+                            "utterance_id": str(ai_utt.id) if ai_utt else "",
                             "text": opening_line,
                         },
                     },
@@ -556,29 +616,3 @@ async def _process_user_message(
             "text": ai_text,
         },
     })
-
-
-def _get_grammar_hint(text: str) -> dict | None:
-    lower = text.strip().lower()
-    if "i go to" in lower and "yesterday" in lower:
-        return {
-            "original_text": text,
-            "error_span": {"start": 0, "end": len("i go to")},
-            "correction": "I went to",
-            "hint": "建议使用过去时 'went'",
-        }
-    if "he go" in lower:
-        return {
-            "original_text": text,
-            "error_span": {"start": text.lower().find("he go"), "end": text.lower().find("he go") + 6},
-            "correction": "goes",
-            "hint": "主语 he 为第三人称单数，动词需用 goes",
-        }
-    if "i has" in lower:
-        return {
-            "original_text": text,
-            "error_span": {"start": text.lower().find("i has"), "end": text.lower().find("i has") + 5},
-            "correction": "I have",
-            "hint": "第一人称应使用 'have' 而非 'has'",
-        }
-    return None

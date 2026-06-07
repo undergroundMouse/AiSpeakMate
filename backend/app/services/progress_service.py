@@ -204,15 +204,18 @@ async def _upsert_weakness(
     existing = existing_q.scalar_one_or_none()
 
     if existing:
-        # Compare this period's count with previous to determine trend
-        prev_error_count = existing.error_count
-        existing.error_count += error_count
-        if existing.error_count < prev_error_count:
+        # The error_count accumulates within the period.
+        # Trend compares the newly added portion vs the previous total to gauge
+        # whether the user is making more or fewer errors of this type.
+        new_total = existing.error_count + error_count
+        # If the new errors are fewer than 20% of the existing total, improving
+        if error_count < existing.error_count * 0.2:
             existing.trend = "improving"
-        elif existing.error_count > prev_error_count * 1.5:
+        elif error_count > existing.error_count * 0.5:
             existing.trend = "worsening"
         else:
             existing.trend = "stable"
+        existing.error_count = new_total
         record = existing
     else:
         record = UserWeaknessRecord(

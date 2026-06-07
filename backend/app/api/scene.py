@@ -71,25 +71,32 @@ async def get_random_scene(
     db: AsyncSession = Depends(get_db),
 ):
     """Return a random active scene, optionally filtered by difficulty level."""
-    from sqlalchemy import func
+    import random
 
-    query = select(Scene).where(Scene.is_active == True)
-    if difficulty:
-        # Filter scenes whose difficulty_levels JSONB array contains the requested level
-        query = query.where(Scene.difficulty_levels.contains([difficulty]))
-
+    # Load all active scenes with relationships for cross-DB compatibility
     result = await db.execute(
-        query.order_by(func.random()).limit(1)
+        select(Scene)
+        .where(Scene.is_active == True)
+        .options(
+            selectinload(Scene.vocabulary),
+            selectinload(Scene.sentence_patterns),
+        )
     )
-    scene = result.scalar_one_or_none()
-    if scene is None:
+    all_scenes = result.scalars().all()
+
+    if difficulty:
+        all_scenes = [
+            s for s in all_scenes
+            if s.get_difficulty_levels() and difficulty in s.get_difficulty_levels()
+        ]
+
+    if not all_scenes:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No active scene found",
         )
 
-    # Load relationships
-    await db.refresh(scene, ["vocabulary", "sentence_patterns"])
+    scene = random.choice(all_scenes)
 
     vocab_list = [
         VocabItem(

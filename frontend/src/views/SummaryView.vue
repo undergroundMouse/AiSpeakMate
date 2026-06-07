@@ -20,37 +20,37 @@
           <div class="radar-item">
             <span class="radar-label">流利度</span>
             <div class="radar-bar-wrap">
-              <div class="radar-bar" :style="{ width: (summary.radar.fluency / 10 * 100) + '%' }"></div>
+              <div class="radar-bar" :style="{ width: summary.radar.fluency + '%' }"></div>
             </div>
-            <span class="radar-value">{{ summary.radar.fluency }}/10</span>
+            <span class="radar-value">{{ summary.radar.fluency }}<span class="radar-unit">/100</span></span>
           </div>
           <div class="radar-item">
             <span class="radar-label">词汇量</span>
             <div class="radar-bar-wrap">
-              <div class="radar-bar" :style="{ width: (summary.radar.vocabulary / 10 * 100) + '%' }"></div>
+              <div class="radar-bar" :style="{ width: summary.radar.vocabulary + '%' }"></div>
             </div>
-            <span class="radar-value">{{ summary.radar.vocabulary }}/10</span>
+            <span class="radar-value">{{ summary.radar.vocabulary }}<span class="radar-unit">/100</span></span>
           </div>
           <div class="radar-item">
             <span class="radar-label">语法</span>
             <div class="radar-bar-wrap">
-              <div class="radar-bar" :style="{ width: (summary.radar.grammar / 10 * 100) + '%' }"></div>
+              <div class="radar-bar" :style="{ width: summary.radar.grammar + '%' }"></div>
             </div>
-            <span class="radar-value">{{ summary.radar.grammar }}/10</span>
+            <span class="radar-value">{{ summary.radar.grammar }}<span class="radar-unit">/100</span></span>
           </div>
           <div class="radar-item">
             <span class="radar-label">发音</span>
             <div class="radar-bar-wrap">
-              <div class="radar-bar" :style="{ width: (summary.radar.pronunciation / 10 * 100) + '%' }"></div>
+              <div class="radar-bar" :style="{ width: summary.radar.pronunciation + '%' }"></div>
             </div>
-            <span class="radar-value">{{ summary.radar.pronunciation }}/10</span>
+            <span class="radar-value">{{ summary.radar.pronunciation }}<span class="radar-unit">/100</span></span>
           </div>
           <div class="radar-item">
             <span class="radar-label">互动</span>
             <div class="radar-bar-wrap">
-              <div class="radar-bar" :style="{ width: (summary.radar.interaction / 10 * 100) + '%' }"></div>
+              <div class="radar-bar" :style="{ width: summary.radar.interaction + '%' }"></div>
             </div>
-            <span class="radar-value">{{ summary.radar.interaction }}/10</span>
+            <span class="radar-value">{{ summary.radar.interaction }}<span class="radar-unit">/100</span></span>
           </div>
         </div>
       </div>
@@ -257,11 +257,17 @@ onMounted(() => {
   transition: width 0.5s ease;
 }
 .radar-value {
-  flex: 0 0 50px;
+  flex: 0 0 70px;
   text-align: right;
   font-weight: 700;
   font-size: 0.95rem;
   color: var(--accent-primary);
+}
+.radar-unit {
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--text-secondary);
+  margin-left: 1px;
 }
 
 /* Highlights & suggestions */

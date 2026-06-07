@@ -76,6 +76,10 @@ export const useChatStore = defineStore('chat', () => {
         switch (data.type) {
           case 'session_started': {
             connectionStatus.value = { connected: true, connecting: false, error: null };
+            // Sync session ID from server (in case server reused or created a new one)
+            if (payload.session_id) {
+              currentSessionId.value = payload.session_id;
+            }
             // Display AI's opening line
             const firstMsg = payload.ai_first_message;
             if (firstMsg?.text) {
