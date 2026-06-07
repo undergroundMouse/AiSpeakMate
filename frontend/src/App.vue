@@ -9,7 +9,7 @@
 
         <!-- Authenticated: user badge with dropdown -->
         <template v-if="auth.isAuthenticated">
-          <div class="user-dropdown" @click="showUserMenu = !showUserMenu" v-click-outside="() => showUserMenu = false">
+          <div class="user-dropdown" @click="showUserMenu = !showUserMenu">
             <div class="user-badge" style="cursor:pointer">
               <div class="user-avatar">{{ auth.username.charAt(0).toUpperCase() }}</div>
               <span>{{ auth.username }} ▾</span>
@@ -102,7 +102,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue';
+import { ref, reactive, watch, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
@@ -197,4 +197,14 @@ function saveVoice() {
 if (currentTheme.value !== 'default') {
   document.documentElement.classList.add(`theme-${currentTheme.value}`);
 }
+
+// Close user dropdown on outside click
+function onDocClick(e: MouseEvent) {
+  const target = e.target as HTMLElement;
+  if (!target.closest('.user-dropdown')) {
+    showUserMenu.value = false;
+  }
+}
+onMounted(() => document.addEventListener('click', onDocClick));
+onUnmounted(() => document.removeEventListener('click', onDocClick));
 </script>
