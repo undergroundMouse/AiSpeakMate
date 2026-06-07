@@ -31,12 +31,47 @@ export const useChatStore = defineStore('chat', () => {
   });
   const isRecording = ref(false);
   const isAiSpeaking = ref(false);
+  const ttsEnabled = ref(true);
   const currentSessionId = ref<string | null>(null);
   const sceneId = ref<number | null>(null);
 
   let ws: WebSocket | null = null;
   let messageIdCounter = 0;
   let currentInterruptId: string | null = null;
+
+  // --- TTS (Speech Synthesis) ---
+  function speakText(text: string) {
+    if (!ttsEnabled.value) return;
+    if (!window.speechSynthesis) return;
+
+    // Stop any ongoing speech (interrupt)
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'en-US';
+    utterance.rate = 0.9;  // slightly slower for learners
+    utterance.pitch = 1.0;
+
+    utterance.onstart = () => { isAiSpeaking.value = true; };
+    utterance.onend = () => { isAiSpeaking.value = false; };
+    utterance.onerror = () => { isAiSpeaking.value = false; };
+
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function stopSpeaking() {
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    isAiSpeaking.value = false;
+  }
+
+  function toggleTts() {
+    ttsEnabled.value = !ttsEnabled.value;
+    if (!ttsEnabled.value) {
+      stopSpeaking();
+    }
+  }
 
   function connect(sessionId: string, token: string, options?: { sceneId?: number }) {
     if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) {
@@ -124,6 +159,8 @@ export const useChatStore = defineStore('chat', () => {
               if (payload.is_final) {
                 lastMsg.isTemporary = false;
                 lastMsg.id = payload.interrupt_id || lastMsg.id;
+                // Speak the AI response aloud
+                speakText(lastMsg.content);
               }
             } else {
               messages.value.push({
@@ -133,8 +170,14 @@ export const useChatStore = defineStore('chat', () => {
                 timestamp: new Date().toISOString(),
                 isTemporary: !payload.is_final,
               });
+              if (payload.is_final) {
+                // Speak the AI response aloud
+                speakText(payload.text || '');
+              }
             }
-            isAiSpeaking.value = !payload.is_final;
+            if (!payload.is_final) {
+              isAiSpeaking.value = true;
+            }
             break;
           }
 
@@ -215,6 +258,9 @@ export const useChatStore = defineStore('chat', () => {
       return;
     }
 
+    // Stop AI speaking (user interruption)
+    stopSpeaking();
+
     const userMsg: ChatMessage = {
       id: `user-${++messageIdCounter}`,
       role: 'user',
@@ -241,8 +287,40 @@ export const useChatStore = defineStore('chat', () => {
       connectionStatus.value.error = 'Not connected to chat server';
       return;
     }
-    // Send audio as binary
-    ws.send(audioBlob);
+
+    // Stop AI speaking (user interruption via voice)
+    stopSpeaking();
+
+    // Show temporary user message while ASR is processing
+    const tempId = `user-${++messageIdCounter}`;
+    messages.value.push({
+      id: tempId,
+      role: 'user',
+      content: '🎤 语音识别中...',
+      timestamp: new Date().toISOString(),
+      isTemporary: true,
+    });
+
+    // Convert audio to base64 and send as JSON metadata frame
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(',')[1]; // strip data:... prefix
+      ws!.send(JSON.stringify({
+        type: 'audio_data',
+        payload: {
+          session_id: currentSessionId.value,
+          audio_base64: base64,
+          audio_mime: audioBlob.type || 'audio/webm',
+          is_end: true,
+        },
+      }));
+    };
+    reader.onerror = () => {
+      // Remove temporary message on error
+      messages.value = messages.value.filter(m => m.id !== tempId);
+      connectionStatus.value.error = 'Failed to read audio data';
+    };
+    reader.readAsDataURL(audioBlob);
   }
 
   function addTemporaryMessage(role: 'user' | 'assistant', content: string) {
@@ -264,12 +342,16 @@ export const useChatStore = defineStore('chat', () => {
     connectionStatus,
     isRecording,
     isAiSpeaking,
+    ttsEnabled,
     currentSessionId,
     sceneId,
     connect,
     disconnect,
     sendMessage,
     sendAudio,
+    speakText,
+    stopSpeaking,
+    toggleTts,
     addTemporaryMessage,
     sendEndSession,
     clearMessages,

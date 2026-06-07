@@ -7,6 +7,14 @@
         <span class="dot"></span>
         {{ statusText }}
       </div>
+      <button
+        class="btn-tts"
+        :class="{ muted: !chatStore.ttsEnabled }"
+        :title="chatStore.ttsEnabled ? 'AI 语音播放中 — 点击静音' : 'AI 语音已静音 — 点击开启'"
+        @click="chatStore.toggleTts()"
+      >
+        {{ chatStore.ttsEnabled ? '🔊' : '🔇' }}
+      </button>
       <button v-if="chatStore.connectionStatus.connected" class="btn-end" @click="endSession">
         结束对话
       </button>
@@ -336,6 +344,24 @@ onUnmounted(() => {
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
+}
+
+.btn-tts {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--bg-card);
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  margin-left: auto;
+}
+.btn-tts:hover { background: var(--accent-primary); }
+.btn-tts.muted {
+  opacity: 0.5;
+  background: var(--bg-secondary);
 }
 
 .btn-end {
