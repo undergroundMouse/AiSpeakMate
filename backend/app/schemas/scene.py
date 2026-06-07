@@ -49,6 +49,7 @@ class SceneListResponse(BaseModel):
 
 class CustomSceneRequest(BaseModel):
     topic: str
+    description: Optional[str] = None
     role: Optional[str] = None
     difficulty: str = "intermediate"
     focus_grammar: Optional[list[str]] = None

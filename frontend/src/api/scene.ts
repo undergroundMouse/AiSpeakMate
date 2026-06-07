@@ -46,6 +46,7 @@ export interface SceneDetail {
 
 export interface CustomSceneRequest {
   topic: string;
+  description?: string;
   role?: string;
   difficulty: string;
   focus_grammar?: string[];

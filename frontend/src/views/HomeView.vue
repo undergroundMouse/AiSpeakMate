@@ -80,11 +80,7 @@
         <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:12px">描述你想要练习的场景，AI 将自动生成角色、开场白、词汇和句式</p>
         <input v-model="customTopic" placeholder="主题，如：在药店买药" style="width:100%;margin-bottom:8px" />
         <input v-model="customRole" placeholder="AI角色，如：药剂师 (可选)" style="width:100%;margin-bottom:8px" />
-        <select v-model="customDifficulty" style="width:100%;margin-bottom:12px">
-          <option value="beginner">初级</option>
-          <option value="intermediate" selected>中级</option>
-          <option value="advanced">高级</option>
-        </select>
+        <textarea v-model="customDesc" placeholder="详细描述，如：我感冒了需要买药，告诉药剂师我的症状，询问该吃什么药 (可选)" style="width:100%;height:70px;margin-bottom:12px;padding:8px;border-radius:8px;border:1px solid var(--bg-card);background:var(--bg-primary);color:var(--text-primary);font-size:0.88rem;resize:vertical;font-family:inherit"></textarea>
         <p v-if="customError" style="color:var(--accent-danger);font-size:0.8rem;margin-bottom:8px">{{ customError }}</p>
         <div class="modal-actions">
           <button class="btn-cancel" @click="showCustomScene=false">取消</button>
@@ -153,7 +149,7 @@ const randomLoading = ref(false);
 const showCustomScene = ref(false);
 const customTopic = ref('');
 const customRole = ref('');
-const customDifficulty = ref('intermediate');
+const customDesc = ref('');
 const customLoading = ref(false);
 const customError = ref('');
 const customSceneData = ref<any>(null);
@@ -166,7 +162,8 @@ async function createCustomScene() {
     const res = await sceneApi.createCustom({
       topic: customTopic.value,
       role: customRole.value || undefined,
-      difficulty: customDifficulty.value,
+      description: customDesc.value || undefined,
+      difficulty: 'intermediate',
     });
     customSceneData.value = res;
     // Add to custom scenes list for display
@@ -174,7 +171,7 @@ async function createCustomScene() {
       scene_id: `custom_${Date.now()}`,
       name: res.topic,
       description: res.role_prompt,
-      difficulty_levels: [customDifficulty.value],
+      difficulty_levels: ['intermediate'],
       tags: ['custom'],
       _custom: true,
       _data: res,

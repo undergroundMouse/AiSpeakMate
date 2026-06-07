@@ -213,7 +213,9 @@ async def create_custom_scene(
 
     try:
         from ..services.llm_service import generate_response as llm_generate
-        prompt = f"""Create an English conversation practice scene about: {body.topic}
+        desc_text = body.description or ""
+        desc_line = f"\nDescription: {desc_text}" if desc_text else ""
+        prompt = f"""Create an English conversation practice scene about: {body.topic}{desc_line}
 Role: {body.role or 'conversation partner'}
 Difficulty: {body.difficulty}
 
