@@ -200,9 +200,14 @@ SEED_CATEGORIES = [
 
 async def seed_scenes(db: AsyncSession) -> None:
     """Insert seed categories, scenes, vocabulary, and sentence patterns if DB is empty."""
-    result = await db.execute(select(SceneCategory).limit(1))
+    result = await db.execute(select(Scene).limit(1))
     if result.scalar_one_or_none() is not None:
         return  # Already seeded
+
+    # Clear stale categories from SQL migration
+    from sqlalchemy import delete as _delete
+    await db.execute(_delete(SceneCategory))
+    await db.flush()
 
     for cat_data in SEED_CATEGORIES:
         category = SceneCategory(

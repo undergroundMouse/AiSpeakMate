@@ -815,7 +815,7 @@ async def _process_user_message(
     scene_data = data["scene_data"] if data else None
     session_obj = data["session"] if data else None
 
-    # Build conversation history for Groq
+    # Build conversation history for LLM
     history = []
     if session_obj:
         utt_result = await db.execute(
@@ -824,7 +824,8 @@ async def _process_user_message(
             .order_by(Utterance.sequence)
         )
         for u in utt_result.scalars().all():
-            history.append({"role": u.speaker, "content": u.text})
+            role = "assistant" if u.speaker == "ai" else "user"
+            history.append({"role": role, "content": u.text})
 
     # Try Groq LLM
     system_prompt = scene_data.get("role_prompt", "") if scene_data else ""
