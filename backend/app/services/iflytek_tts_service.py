@@ -9,6 +9,7 @@ import hmac
 import json
 import logging
 from datetime import datetime
+from pathlib import Path
 from time import mktime
 from urllib.parse import urlencode
 from wsgiref.handlers import format_date_time
@@ -31,12 +32,48 @@ DEFAULT_SPEED = 50
 TTS_TIMEOUT_SECONDS = 30
 
 _runtime_credentials: dict[str, str] = {}
+_CREDENTIALS_FILE = Path(__file__).resolve().parents[2] / ".runtime_iflytek.json"
+
+
+def _load_persisted_credentials() -> None:
+    if not _CREDENTIALS_FILE.exists():
+        return
+    try:
+        data = json.loads(_CREDENTIALS_FILE.read_text(encoding="utf-8"))
+        for key in ("app_id", "api_key", "api_secret"):
+            value = (data.get(key) or "").strip()
+            if value:
+                _runtime_credentials[key] = value
+        if _runtime_credentials:
+            logger.info("Loaded iFlytek credentials from %s", _CREDENTIALS_FILE.name)
+    except Exception as exc:
+        logger.warning("Failed to load persisted iFlytek credentials: %s", exc)
+
+
+def _persist_credentials() -> None:
+    if not _runtime_credentials:
+        return
+    try:
+        _CREDENTIALS_FILE.write_text(
+            json.dumps(_runtime_credentials, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        logger.warning("Failed to persist iFlytek credentials: %s", exc)
+
+
+def load_persisted_credentials() -> None:
+    _load_persisted_credentials()
 
 
 def set_runtime_credentials(app_id: str, api_key: str, api_secret: str) -> None:
     _runtime_credentials["app_id"] = app_id.strip()
     _runtime_credentials["api_key"] = api_key.strip()
     _runtime_credentials["api_secret"] = api_secret.strip()
+    _persist_credentials()
+
+
+_load_persisted_credentials()
 
 
 def _app_id() -> str:
@@ -59,9 +96,12 @@ def resolve_vcn(voice_key: str) -> str:
     return VOICE_MAP.get(voice_key, VOICE_MAP[DEFAULT_VOICE_KEY])
 
 
-def build_auth_url() -> str:
-    host = settings.iflytek_tts_host
-    path = settings.iflytek_tts_path
+def build_auth_url(
+    host: str | None = None,
+    path: str | None = None,
+) -> str:
+    host = host or settings.iflytek_tts_host
+    path = path or settings.iflytek_tts_path
     date = format_date_time(mktime(datetime.now().timetuple()))
 
     signature_origin = (

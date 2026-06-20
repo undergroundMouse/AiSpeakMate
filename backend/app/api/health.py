@@ -4,9 +4,10 @@ from fastapi import APIRouter
 
 from ..core.config import settings
 from ..services.asr_service import is_loaded
+from ..services.audio_util import ffmpeg_available
+from ..services.iflytek_ise_service import is_ise_configured
 from ..services.iflytek_tts_service import is_configured as iflytek_tts_configured
 from ..services.llm_service import is_llm_configured
-from ..services.speechsuper_service import is_configured as speechsuper_configured
 
 router = APIRouter()
 
@@ -19,13 +20,16 @@ async def voice_health():
             "device": settings.whisper_device,
             "loaded": is_loaded(),
         },
-        "speechsuper": {
-            "configured": speechsuper_configured(),
-            "endpoint": settings.speechsuper_endpoint,
+        "iflytek_ise": {
+            "configured": is_ise_configured(),
+            "host": settings.iflytek_ise_host,
         },
         "iflytek_tts": {
             "configured": iflytek_tts_configured(),
             "host": settings.iflytek_tts_host,
+        },
+        "audio_conversion": {
+            "ffmpeg_available": ffmpeg_available(),
         },
         "llm": {
             "configured": is_llm_configured(),

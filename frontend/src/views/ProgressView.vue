@@ -13,7 +13,7 @@
       v-if="progress && !loading && showPronunciationHint"
       class="info-banner"
     >
-      发音与流利度分数需在对话中开启纠音，并配置 SpeechSuper 后才会基于真实音频评测；未配置时可能显示文本估算或无数据。
+      发音与流利度分数需在对话中开启纠音，并配置讯飞开放平台（语音评测 ISE）后才会基于真实音频评测；未配置时可能显示文本估算或无数据。
     </div>
 
     <div v-if="progress && !loading" class="content">

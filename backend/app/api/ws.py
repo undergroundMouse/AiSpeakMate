@@ -921,6 +921,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 negotiated = {
                     "audio_format": client_config.get("audio_format", "pcm_s16le"),
                     "tts_voice": client_config.get("tts_voice", "en-US-female"),
+                    "browser_tts": bool(client_config.get("browser_tts", False)),
+                    "coaching_enabled": bool(client_config.get("coaching_enabled", False)),
                 }
 
                 # Resolve the session's scene to get the opening line
@@ -961,10 +963,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     "websocket": websocket,
                     "user_id": user_id,
                     "mode": session_mode,
-                    "coaching_enabled": False,
+                    "coaching_enabled": negotiated["coaching_enabled"],
                     "stream_cancelled": False,
                     "interrupted_responses": set(),
                     "tts_voice": negotiated["tts_voice"],
+                    "browser_tts": negotiated.get("browser_tts", False),
                     "custom_role_prompt": custom_role,
                     "custom_description": custom_desc,
                     "custom_scene_name": custom_scene_name,
@@ -1014,20 +1017,41 @@ async def websocket_endpoint(websocket: WebSocket):
                         sequence_counter += 1
                         ai_utt = await _store_utterance(session.id, "ai", opening_line, sequence_counter)
 
+                opening_utterance_id = str(ai_utt.id) if ai_utt else str(uuid.uuid4())
                 await websocket.send_json({
                     "type": "session_ready",
                     "payload": {
                         "session_id": str(session.id),
                         "ai_first_message": {
-                            "utterance_id": str(ai_utt.id) if ai_utt else "",
+                            "utterance_id": opening_utterance_id,
                             "text": opening_line,
                         },
                         "negotiated_config": {
                             "audio_format": negotiated["audio_format"],
                             "tts_voice": negotiated["tts_voice"],
+                            "coaching_enabled": negotiated["coaching_enabled"],
                         },
                     },
                 })
+                await websocket.send_json({
+                    "type": "coaching_state",
+                    "payload": {
+                        "session_id": str(session.id),
+                        "enabled": negotiated["coaching_enabled"],
+                        "effective_from": "next_user_utterance",
+                    },
+                })
+
+                if not negotiated.get("browser_tts"):
+                    from ..services.voice_pipeline import send_batch_tts
+
+                    await send_batch_tts(
+                        websocket,
+                        str(session.id),
+                        opening_line,
+                        negotiated["tts_voice"],
+                        opening_utterance_id,
+                    )
 
             # --- RESUME SESSION (V1.1: reconnection) ---
             elif msg_type == "resume_session":
@@ -1067,6 +1091,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 active_connections[current_session_id] = {
                     "user_id": user_id,
                     "sequence": sequence_counter,
+                    "coaching_enabled": False,
                     "interrupted_responses": set(),
                 }
 
@@ -1146,11 +1171,13 @@ async def websocket_endpoint(websocket: WebSocket):
                         asr_text = client_text
                     if asr_text:
                         try:
+                            coaching_enabled = _resolve_coaching_enabled(conn, payload)
                             await _process_user_message(
                                 websocket, db, current_session_id, asr_text, sequence_counter,
                                 audio_bytes=audio_bytes or None,
                                 audio_mime=mime,
                                 asr_confidence=confidence,
+                                coaching_enabled=coaching_enabled,
                             )
                             sequence_counter += 2
                         except Exception as e:
@@ -1199,11 +1226,14 @@ async def websocket_endpoint(websocket: WebSocket):
                         confidence = 0.95
                     if asr_text:
                         try:
+                            conn = active_connections.setdefault(current_session_id, {})
+                            coaching_enabled = _resolve_coaching_enabled(conn, payload)
                             await _process_user_message(
                                 websocket, db, current_session_id, asr_text, sequence_counter,
                                 audio_bytes=audio_bytes,
                                 audio_mime=payload.get("audio_mime", "audio/webm"),
                                 asr_confidence=confidence,
+                                coaching_enabled=coaching_enabled,
                             )
                             sequence_counter += 2
                         except Exception as e:
@@ -1226,8 +1256,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 text = (payload.get("text") or "").strip()
                 if text:
                     try:
+                        conn = active_connections.setdefault(current_session_id, {})
+                        coaching_enabled = _resolve_coaching_enabled(conn, payload)
                         await _process_user_message(
-                            websocket, db, current_session_id, text, sequence_counter
+                            websocket, db, current_session_id, text, sequence_counter,
+                            coaching_enabled=coaching_enabled,
                         )
                         sequence_counter += 2
                     except Exception as e:
@@ -1494,6 +1527,7 @@ async def _send_pronunciation_feedback(
         "fluency_score": evaluation.fluency_score,
         "completeness_score": evaluation.completeness_score,
         "brief_tip": evaluation.advice or "Keep practicing!",
+        "source": evaluation.source or "text_analysis",
     }
     if word_scores:
         fb_payload["word_scores"] = word_scores
@@ -1503,7 +1537,52 @@ async def _send_pronunciation_feedback(
                 f"https://dict.youdao.com/dictvoice?audio={worst_word['word']}&type=0"
             )
 
-    await websocket.send_json({"type": "pronunciation_feedback", "payload": fb_payload})
+    await _safe_ws_send(websocket, {"type": "pronunciation_feedback", "payload": fb_payload})
+
+
+_PRONUNCIATION_SKIP_MESSAGES: dict[str, str] = {
+    "no_audio": "发音评测需要麦克风录音，打字输入无法评测",
+    "not_configured": "请在 API 配置中填写讯飞密钥并开通语音评测 ISE",
+    "conversion_failed": "音频格式转换失败，请重试或检查录音",
+    "ise_failed": "讯飞发音评测失败，请检查密钥与 ISE 服务是否开通",
+    "internal_error": "发音评测出错，请稍后重试",
+}
+
+
+def _resolve_coaching_enabled(
+    conn: dict,
+    payload: dict | None = None,
+) -> bool:
+    """Resolve coaching flag from WS payload (authoritative) or connection state."""
+    if payload and "coaching_enabled" in payload:
+        enabled = bool(payload.get("coaching_enabled"))
+        conn["coaching_enabled"] = enabled
+        return enabled
+    return bool(conn.get("coaching_enabled", False))
+
+
+async def _safe_ws_send(websocket: WebSocket, data: dict) -> bool:
+    try:
+        await websocket.send_json(data)
+        return True
+    except Exception as e:
+        logger.warning("WebSocket send failed (%s): %s", data.get("type"), e)
+        return False
+
+
+async def _send_pronunciation_skipped(
+    websocket: WebSocket,
+    session_id: uuid.UUID,
+    reason: str,
+):
+    await _safe_ws_send(websocket, {
+        "type": "pronunciation_skipped",
+        "payload": {
+            "session_id": str(session_id),
+            "reason": reason,
+            "message": _PRONUNCIATION_SKIP_MESSAGES.get(reason, "发音评测未完成"),
+        },
+    })
 
 
 async def _pronunciation_eval_background(
@@ -1515,9 +1594,6 @@ async def _pronunciation_eval_background(
     audio_mime: str,
 ):
     """Run pronunciation evaluation in background when coaching is enabled."""
-    conn = active_connections.get(session_id, {})
-    if not conn.get("coaching_enabled", False):
-        return
     db_gen = get_db()
     db: AsyncSession = await anext(db_gen)
     try:
@@ -1528,14 +1604,17 @@ async def _pronunciation_eval_background(
         user_utt = utt_result.scalar_one_or_none()
         if not user_utt:
             return
-        evaluation = await store_pronunciation_evaluation(
-            db, user_utt, asr_text, audio_bytes, audio_mime, use_speechsuper=True,
+        evaluation, skip_reason = await store_pronunciation_evaluation(
+            db, user_utt, asr_text, audio_bytes, audio_mime, use_iflytek=True,
         )
-        if not active_connections.get(session_id, {}).get("coaching_enabled", False):
+        if not evaluation:
+            if skip_reason:
+                await _send_pronunciation_skipped(websocket, session_id, skip_reason)
             return
         await _send_pronunciation_feedback(websocket, db, session_id, user_utt, asr_text, evaluation)
     except Exception as e:
-        logger.warning("Background pronunciation eval failed: %s", e)
+        logger.warning("Background pronunciation eval failed: %s", e, exc_info=True)
+        await _send_pronunciation_skipped(websocket, session_id, "internal_error")
     finally:
         await db_gen.aclose()
 
@@ -1549,14 +1628,17 @@ async def _process_user_message(
     audio_bytes: bytes | None = None,
     audio_mime: str = "audio/webm",
     asr_confidence: float = 0.95,
+    coaching_enabled: bool = False,
 ):
     """Process a final user utterance: store, evaluate, and generate AI response."""
-    conn = active_connections.get(current_session_id, {})
-    coaching_enabled = conn.get("coaching_enabled", False)
+    conn = active_connections.setdefault(current_session_id, {})
+    conn["coaching_enabled"] = coaching_enabled
     conn["stream_cancelled"] = False
 
     def cancel_check() -> bool:
         return conn.get("stream_cancelled", False)
+
+    user_utt = await _store_utterance(current_session_id, "user", asr_text, sequence_counter + 1)
 
     await websocket.send_json({
         "type": "asr_final",
@@ -1564,16 +1646,16 @@ async def _process_user_message(
             "session_id": str(current_session_id),
             "text": asr_text,
             "confidence": asr_confidence,
+            "utterance_id": str(user_utt.id),
             "timestamp": datetime.utcnow().isoformat(),
         },
     })
 
-    user_utt = await _store_utterance(current_session_id, "user", asr_text, sequence_counter + 1)
-
     if coaching_enabled:
-        asyncio.create_task(_pronunciation_eval_background(
+        logger.info("Running pronunciation eval for utterance %s", user_utt.id)
+        await _pronunciation_eval_background(
             websocket, current_session_id, user_utt.id, asr_text, audio_bytes, audio_mime,
-        ))
+        )
 
     # Store grammar errors for post-session summary only (no real-time hints)
     await _store_grammar_errors(db, user_utt, asr_text)
@@ -1617,6 +1699,7 @@ async def _process_user_message(
     }
     llm_temperature = difficulty_temperature.get(session_difficulty, 0.7)
     tts_voice_key = conn.get("tts_voice", "en-US-female")
+    browser_tts = bool(conn.get("browser_tts", False))
     resp_id = str(uuid.uuid4())
 
     from ..services.voice_pipeline import (
@@ -1635,6 +1718,7 @@ async def _process_user_message(
         tts_voice_key,
         resp_id,
         cancel_check,
+        skip_tts=browser_tts,
     )
     if not ai_text:
         ai_text = await generate_ai_response_batch(
@@ -1645,7 +1729,7 @@ async def _process_user_message(
             _simulate_llm_response,
             (asr_text, scene_data),
         )
-        if ai_text and not cancel_check():
+        if ai_text and not cancel_check() and not browser_tts:
             await send_batch_tts(websocket, str(current_session_id), ai_text, tts_voice_key, resp_id)
 
     if not ai_text:

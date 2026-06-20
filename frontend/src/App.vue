@@ -85,7 +85,8 @@
         </div>
 
         <!-- TTS Voice -->
-        <h4 style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:8px;margin-top:16px">AI 语音</h4>
+        <h4 style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:8px;margin-top:16px">AI 语音（浏览器朗读）</h4>
+        <p style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:8px">使用本机浏览器语音引擎朗读 AI 回复，下方选项用于选择英式/美式与男/女声。</p>
         <div v-for="v in voices" :key="v.key" class="voice-option" :class="{ active: ttsVoice === v.key }" @click="ttsVoice = v.key; saveVoice()">
           {{ v.label }}
         </div>

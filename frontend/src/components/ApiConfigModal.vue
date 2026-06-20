@@ -37,11 +37,12 @@
       <!-- iFlytek TTS -->
       <section class="api-section">
         <div class="section-head">
-          <h4>讯飞 TTS 语音合成</h4>
+          <h4>讯飞开放平台（发音评测 ISE）</h4>
           <span class="badge" :class="status.iflytek_tts ? 'ok' : 'pending'">
             {{ status.iflytek_tts ? '已配置' : '未配置' }}
           </span>
         </div>
+        <p class="section-note">AI 朗读已使用浏览器自带语音。此处密钥仅用于发音评测（ISE），需在讯飞控制台开通「语音评测（流式版）」。</p>
         <label class="field">
           <span>App ID</span>
           <input v-model="iflytekForm.app_id" type="text" placeholder="讯飞 App ID" />
@@ -56,33 +57,9 @@
         </label>
         <div class="section-actions">
           <button type="button" class="btn-save" :disabled="saving.iflytek" @click="saveIflytek">
-            {{ saving.iflytek ? '保存中...' : '保存讯飞 TTS' }}
+            {{ saving.iflytek ? '保存中...' : '保存讯飞配置' }}
           </button>
           <span v-if="messages.iflytek" class="msg" :class="messageClass.iflytek">{{ messages.iflytek }}</span>
-        </div>
-      </section>
-
-      <!-- SpeechSuper -->
-      <section class="api-section">
-        <div class="section-head">
-          <h4>SpeechSuper 发音评测</h4>
-          <span class="badge" :class="status.speechsuper ? 'ok' : 'pending'">
-            {{ status.speechsuper ? '已配置' : '未配置' }}
-          </span>
-        </div>
-        <label class="field">
-          <span>App Key</span>
-          <input v-model="speechsuperForm.app_key" type="password" placeholder="SpeechSuper App Key" autocomplete="off" />
-        </label>
-        <label class="field">
-          <span>Secret Key</span>
-          <input v-model="speechsuperForm.secret_key" type="password" placeholder="SpeechSuper Secret Key" autocomplete="off" />
-        </label>
-        <div class="section-actions">
-          <button type="button" class="btn-save" :disabled="saving.speechsuper" @click="saveSpeechsuper">
-            {{ saving.speechsuper ? '保存中...' : '保存 SpeechSuper' }}
-          </button>
-          <span v-if="messages.speechsuper" class="msg" :class="messageClass.speechsuper">{{ messages.speechsuper }}</span>
         </div>
       </section>
 
@@ -106,12 +83,11 @@ defineEmits<{ close: [] }>();
 
 const llmForm = reactive({ provider: 'deepseek', api_key: '', model: '' });
 const iflytekForm = reactive({ app_id: '', api_key: '', api_secret: '' });
-const speechsuperForm = reactive({ app_key: '', secret_key: '' });
 
-const status = reactive({ llm: false, iflytek_tts: false, speechsuper: false });
-const saving = reactive({ llm: false, iflytek: false, speechsuper: false });
-const messages = reactive({ llm: '', iflytek: '', speechsuper: '' });
-const messageClass = reactive({ llm: '', iflytek: '', speechsuper: '' });
+const status = reactive({ llm: false, iflytek_tts: false, iflytek_ise: false });
+const saving = reactive({ llm: false, iflytek: false });
+const messages = reactive({ llm: '', iflytek: '' });
+const messageClass = reactive({ llm: '', iflytek: '' });
 
 function loadFormsFromCache() {
   const cache = loadApiConfigCache();
@@ -125,10 +101,6 @@ function loadFormsFromCache() {
     iflytekForm.api_key = cache.iflytek.api_key || '';
     iflytekForm.api_secret = cache.iflytek.api_secret || '';
   }
-  if (cache.speechsuper) {
-    speechsuperForm.app_key = cache.speechsuper.app_key || '';
-    speechsuperForm.secret_key = cache.speechsuper.secret_key || '';
-  }
 }
 
 async function refreshStatus() {
@@ -136,7 +108,7 @@ async function refreshStatus() {
     const res = await settingsApi.getApisStatus();
     status.llm = res.llm.configured;
     status.iflytek_tts = res.iflytek_tts.configured;
-    status.speechsuper = res.speechsuper.configured;
+    status.iflytek_ise = res.iflytek_ise.configured;
   } catch {
     // ignore when not authenticated
   }
@@ -196,32 +168,6 @@ async function saveIflytek() {
   }
 }
 
-async function saveSpeechsuper() {
-  if (!speechsuperForm.app_key.trim() || !speechsuperForm.secret_key.trim()) {
-    messages.speechsuper = '请填写完整密钥';
-    messageClass.speechsuper = 'error';
-    return;
-  }
-  saving.speechsuper = true;
-  messages.speechsuper = '';
-  try {
-    const payload = {
-      app_key: speechsuperForm.app_key.trim(),
-      secret_key: speechsuperForm.secret_key.trim(),
-    };
-    const res = await settingsApi.saveSpeechSuper(payload);
-    updateApiConfigCache({ speechsuper: payload });
-    status.speechsuper = res.configured;
-    messages.speechsuper = res.configured ? '已保存' : '保存失败';
-    messageClass.speechsuper = res.configured ? 'ok' : 'error';
-  } catch (e: any) {
-    messages.speechsuper = e?.response?.data?.detail || '保存失败';
-    messageClass.speechsuper = 'error';
-  } finally {
-    saving.speechsuper = false;
-  }
-}
-
 onMounted(() => {
   loadFormsFromCache();
   refreshStatus();
@@ -257,6 +203,13 @@ onMounted(() => {
 .section-head h4 {
   font-size: 0.92rem;
   color: var(--text-primary);
+}
+
+.section-note {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin: -4px 0 12px;
 }
 
 .badge {

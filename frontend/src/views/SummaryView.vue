@@ -94,7 +94,10 @@
             </div>
             <p class="error-sentence">"{{ pe.sentence }}"</p>
             <router-link
-              :to="`/sessions/${summary.session_id}/pronunciation/${pe.utterance_id}`"
+              :to="{
+                path: `/sessions/${summary.session_id}/pronunciation/${pe.utterance_id}`,
+                query: { from: 'summary' },
+              }"
               class="detail-link"
             >
               查看发音详情 &rarr;

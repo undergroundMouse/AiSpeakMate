@@ -15,21 +15,15 @@ export interface IflytekTtsSettings {
   api_secret: string;
 }
 
-export interface SpeechSuperSettings {
-  app_key: string;
-  secret_key: string;
-}
-
 export interface ApiConfigCache {
   llm?: LlmSettings;
   iflytek?: IflytekTtsSettings;
-  speechsuper?: SpeechSuperSettings;
 }
 
 export interface ApisStatus {
   llm: { configured: boolean };
   iflytek_tts: { configured: boolean };
-  speechsuper: { configured: boolean };
+  iflytek_ise: { configured: boolean };
 }
 
 export const LLM_PROVIDERS = [
@@ -43,7 +37,13 @@ export const LLM_PROVIDERS = [
 export function loadApiConfigCache(): ApiConfigCache {
   try {
     const raw = localStorage.getItem(API_CONFIG_CACHE_KEY);
-    if (raw) return JSON.parse(raw) as ApiConfigCache;
+    if (raw) {
+      const parsed = JSON.parse(raw) as ApiConfigCache & { speechsuper?: unknown };
+      if ('speechsuper' in parsed) {
+        delete parsed.speechsuper;
+      }
+      return parsed;
+    }
   } catch {
     // fall through to legacy migration
   }
@@ -95,11 +95,6 @@ export const settingsApi = {
     const res = await apiClient.put('/settings/iflytek-tts', data);
     return res.data;
   },
-
-  async saveSpeechSuper(data: SpeechSuperSettings): Promise<{ configured: boolean }> {
-    const res = await apiClient.put('/settings/speechsuper', data);
-    return res.data;
-  },
 };
 
 export async function syncApiConfigFromCache(): Promise<void> {
@@ -113,8 +108,5 @@ export async function syncApiConfigFromCache(): Promise<void> {
   }
   if (cache.iflytek?.app_id && cache.iflytek?.api_key && cache.iflytek?.api_secret) {
     await settingsApi.saveIflytekTts(cache.iflytek);
-  }
-  if (cache.speechsuper?.app_key && cache.speechsuper?.secret_key) {
-    await settingsApi.saveSpeechSuper(cache.speechsuper);
   }
 }

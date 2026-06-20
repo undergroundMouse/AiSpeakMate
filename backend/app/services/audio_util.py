@@ -1,11 +1,28 @@
-"""Audio format conversion utilities for ASR and SpeechSuper."""
+"""Audio format conversion utilities for ASR and pronunciation evaluation."""
 
 import io
 import logging
+import shutil
 import subprocess
 import tempfile
 
 logger = logging.getLogger(__name__)
+
+
+def _ffmpeg_executable() -> str | None:
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    try:
+        import imageio_ffmpeg
+
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
+
+
+def ffmpeg_available() -> bool:
+    return _ffmpeg_executable() is not None
 
 
 def convert_to_wav_16k_mono(audio_bytes: bytes, mime_type: str = "audio/webm") -> bytes | None:
@@ -13,10 +30,18 @@ def convert_to_wav_16k_mono(audio_bytes: bytes, mime_type: str = "audio/webm") -
     if not audio_bytes:
         return None
 
+    mime_type = (mime_type or "audio/webm").split(";")[0].strip().lower()
     if mime_type in ("audio/wav", "audio/x-wav", "audio/wave"):
         return audio_bytes
 
+    ffmpeg = _ffmpeg_executable()
+    if not ffmpeg:
+        logger.warning("ffmpeg not found; cannot convert %s to wav", mime_type)
+        return None
+
     suffix = ".webm" if "webm" in mime_type else ".ogg" if "ogg" in mime_type else ".bin"
+    inp_path = ""
+    out_path = ""
     try:
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as inp:
             inp.write(audio_bytes)
@@ -24,29 +49,30 @@ def convert_to_wav_16k_mono(audio_bytes: bytes, mime_type: str = "audio/webm") -
         out_path = inp_path + ".wav"
         result = subprocess.run(
             [
-                "ffmpeg", "-y", "-i", inp_path,
+                ffmpeg, "-y", "-i", inp_path,
                 "-ar", "16000", "-ac", "1", "-f", "wav", out_path,
             ],
             capture_output=True,
             timeout=30,
         )
         if result.returncode != 0:
-            logger.warning("ffmpeg conversion failed: %s", result.stderr.decode(errors="ignore")[:200])
+            logger.warning(
+                "ffmpeg conversion failed: %s",
+                result.stderr.decode(errors="ignore")[:200],
+            )
             return None
         with open(out_path, "rb") as f:
             return f.read()
-    except FileNotFoundError:
-        logger.warning("ffmpeg not found; cannot convert %s to wav", mime_type)
-        return None
     except Exception as e:
         logger.warning("audio conversion error: %s", e)
         return None
     finally:
         try:
             import os
-            if "inp_path" in dir() and os.path.exists(inp_path):
+
+            if inp_path and os.path.exists(inp_path):
                 os.unlink(inp_path)
-            if "out_path" in dir() and os.path.exists(out_path):
+            if out_path and os.path.exists(out_path):
                 os.unlink(out_path)
         except Exception:
             pass

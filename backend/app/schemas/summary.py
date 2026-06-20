@@ -114,7 +114,7 @@ class WeaknessRecord(BaseModel):
 
 
 class ProgressProvenance(BaseModel):
-    pronunciation: str = "none"  # speechsuper | text_analysis | none
+    pronunciation: str = "none"  # iflytek_ise | text_analysis | none
     fluency: str = "none"
     grammar: str = "none"  # evaluation | none
     vocabulary: str = "none"  # heuristic | none

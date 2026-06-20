@@ -14,11 +14,11 @@
         title="场景信息"
       >📋</button>
       <button
-        v-if="chatStore.connectionStatus.connected"
         class="btn-coaching"
         :class="{ active: chatStore.coachingEnabled }"
+        :disabled="!chatStore.connectionStatus.connected"
         @click="toggleCoaching"
-        title="开启后从下一句起显示发音评分"
+        title="开启后从下一句起显示发音评分与纠音建议"
       >
         纠音
       </button>
@@ -163,12 +163,40 @@
             </div>
           </div>
 
-          <!-- Pronunciation score (practice mode only) -->
+          <!-- Pronunciation pending -->
           <div
-            v-if="msg.role === 'user' && msg.pronunciation_score != null && chatStore.coachingEnabled"
-            class="pron-score"
+            v-if="msg.role === 'user' && msg.pronunciationPending && msg.pronunciation_score == null"
+            class="pron-feedback pron-pending"
           >
-            发音评分：{{ msg.pronunciation_score }}/100
+            <span class="pron-score">正在评测发音...</span>
+          </div>
+
+          <!-- Pronunciation feedback (coaching mode) -->
+          <div
+            v-if="msg.role === 'user' && msg.pronunciation_score != null"
+            class="pron-feedback"
+          >
+            <div class="pron-score-row">
+              <span class="pron-score">发音评分：{{ msg.pronunciation_score }}/100</span>
+              <span v-if="msg.pronunciation_source === 'text_analysis'" class="pron-estimated">文本估算</span>
+              <router-link
+                v-if="msg.utteranceId && chatStore.currentSessionId"
+                :to="{
+                  path: `/sessions/${chatStore.currentSessionId}/pronunciation/${msg.utteranceId}`,
+                  query: { from: 'chat' },
+                }"
+                class="pron-detail-link"
+              >查看纠音详情</router-link>
+            </div>
+            <p v-if="msg.pronunciation_tip" class="pron-tip">{{ msg.pronunciation_tip }}</p>
+            <div v-if="lowScoreWords(msg).length" class="pron-words">
+              <span class="pron-words-label">注意发音：</span>
+              <span
+                v-for="w in lowScoreWords(msg)"
+                :key="w.word"
+                class="pron-word-tag"
+              >{{ w.word }}</span>
+            </div>
           </div>
 
           <div v-if="msg.isTemporary" class="typing-indicator">
@@ -268,7 +296,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { useChatStore } from '@/stores/chat';
+import { useChatStore, type ChatMessage } from '@/stores/chat';
+import { syncApiConfigFromCache } from '@/api/settings';
 import { useAuthStore } from '@/stores/auth';
 import { useSceneStore } from '@/stores/scene';
 
@@ -288,14 +317,30 @@ const inputText = ref('');
 const coachingToast = ref('');
 let coachingToastTimer: ReturnType<typeof setTimeout> | null = null;
 
+function showCoachingToast(message: string) {
+  coachingToast.value = message;
+  if (coachingToastTimer) clearTimeout(coachingToastTimer);
+  coachingToastTimer = setTimeout(() => { coachingToast.value = ''; }, 2800);
+}
+
+watch(
+  () => chatStore.pronunciationSkipHint,
+  (msg) => {
+    if (msg) showCoachingToast(msg);
+  },
+);
+
 function toggleCoaching() {
+  if (!chatStore.connectionStatus.connected) return;
   const next = !chatStore.coachingEnabled;
   chatStore.setCoachingEnabled(next);
   if (next) {
-    coachingToast.value = '从下一句开始纠音';
-    if (coachingToastTimer) clearTimeout(coachingToastTimer);
-    coachingToastTimer = setTimeout(() => { coachingToast.value = ''; }, 1500);
+    showCoachingToast('从下一句开始纠音');
   }
+}
+
+function lowScoreWords(msg: ChatMessage) {
+  return (msg.pronunciation_words || []).filter((w) => w.score < 70).slice(0, 3);
 }
 
 const messagesContainer = ref<HTMLElement | null>(null);
@@ -386,18 +431,16 @@ async function lookupWord(word: string) {
 
 function speakDictWord() {
   if (!dictWord.value) return;
-  chatStore.stopSpeaking();
   chatStore.speakText(dictWord.value);
 }
 
 function replayAiAudio(msg: any) {
-  // Play stored Edge-TTS audio if available, fallback to SpeechSynthesis
-  chatStore.stopSpeaking();
-  if (msg.audioUrl || msg.audioBlob) {
-    chatStore.playMessageAudio(msg);
-  } else {
+  if (msg.role === 'assistant') {
+    chatStore.stopLocalPlayback();
     chatStore.speakText(msg.content);
+    return;
   }
+  chatStore.playMessageAudio(msg);
 }
 
 async function toggleTranslate(msgId: string, text: string) {
@@ -620,11 +663,12 @@ async function endSession() {
   router.push(`/summary/${sessionId}`);
 }
 
-onMounted(() => {
+onMounted(async () => {
   if (!auth.isAuthenticated || !auth.token) {
     router.push('/');
     return;
   }
+  await syncApiConfigFromCache().catch(() => {});
   const sessionId = route.params.sessionId as string;
   chatStore.connect(sessionId, auth.token, {
     sceneId: chatStore.sceneId ?? undefined,
@@ -887,6 +931,10 @@ onUnmounted(() => {
   color: var(--accent-primary);
   border-color: var(--accent-primary);
 }
+.btn-coaching:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .coaching-toast {
   position: fixed;
   bottom: 100px;
@@ -936,7 +984,7 @@ onUnmounted(() => {
   position: relative;
 }
 .message-row.user .bubble {
-  background: var(--accent-primary);
+  background: #fff;
   color: #0f172a;
   border-bottom-right-radius: 4px;
 }
@@ -1114,11 +1162,61 @@ onUnmounted(() => {
   font-style: italic;
 }
 
-.pron-score {
+.pron-feedback {
   margin-top: 8px;
-  font-size: 0.8rem;
+  padding: 10px 12px;
+  background: rgba(56, 189, 248, 0.08);
+  border-radius: 8px;
+  border-left: 2px solid var(--accent-primary);
+  font-size: 0.82rem;
+}
+.pron-score-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.pron-score {
   font-weight: 600;
   color: var(--accent-success);
+}
+.pron-estimated {
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+}
+.pron-detail-link {
+  font-size: 0.78rem;
+  color: var(--accent-primary);
+  text-decoration: none;
+}
+.pron-detail-link:hover { text-decoration: underline; }
+.pron-tip {
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin: 4px 0 0;
+}
+.pron-words {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.pron-words-label {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+.pron-word-tag {
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(248, 113, 113, 0.12);
+  color: #f87171;
+  font-size: 0.75rem;
+  font-weight: 600;
 }
 
 /* Typing indicator */

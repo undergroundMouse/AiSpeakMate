@@ -110,8 +110,8 @@ export interface WeaknessRecord {
 
 // --- User Progress ---
 export interface ProgressProvenance {
-  pronunciation: 'speechsuper' | 'text_analysis' | 'none';
-  fluency: 'speechsuper' | 'text_analysis' | 'none';
+  pronunciation: 'iflytek_ise' | 'text_analysis' | 'none';
+  fluency: 'iflytek_ise' | 'text_analysis' | 'none';
   grammar: 'evaluation' | 'none';
   vocabulary: 'heuristic' | 'none';
   interaction: 'heuristic' | 'none';

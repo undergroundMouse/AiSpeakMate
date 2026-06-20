@@ -46,112 +46,71 @@ async def evaluate_pronunciation(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Evaluate pronunciation of a single sentence via SpeechSuper when configured,
-    otherwise fall back to text-analysis.
+    Evaluate pronunciation of a single sentence via iFlytek ISE (requires configuration).
     """
-    audio_bytes = await audio.read()
-    from ..services.audio_util import convert_to_wav_16k_mono
-    from ..services.speechsuper_service import evaluate_pronunciation as ss_evaluate
-    from ..api.ws import _analyze_text, _get_word_phonemes, _score_word_pronunciation
+    from fastapi import HTTPException
 
-    wav = convert_to_wav_16k_mono(audio_bytes, audio.content_type or "audio/webm")
-    ss_result = await ss_evaluate(wav, reference_text, language) if wav else None
+    from ..services.iflytek_ise_service import is_ise_configured
 
-    if ss_result:
-        words = [w.strip(".,!?;:\"'()") for w in reference_text.split()]
-        words = [w for w in words if w]
-        word_scores = []
-        word_map: dict[str, list] = {}
-        for ph in ss_result.phonemes:
-            word_map.setdefault(ph.word, []).append(ph)
-        for word in words:
-            plist = word_map.get(word, [])
-            if plist:
-                ph_list = [
-                    PhonemeScoreOut(
-                        word=word,
-                        word_score=p.word_score,
-                        phoneme=p.phoneme,
-                        phoneme_score=p.phoneme_score,
-                        is_error=p.is_error,
-                        suggested_phoneme=p.suggested_phoneme,
-                    )
-                    for p in plist
-                ]
-                ws = sum(p.phoneme_score for p in plist) // len(plist)
-            else:
-                phonemes = _get_word_phonemes(word)
-                ws = _score_word_pronunciation(word)
-                ph_list = [
-                    PhonemeScoreOut(
-                        word=word,
-                        word_score=ws,
-                        phoneme=ph,
-                        phoneme_score=max(40, min(100, ws - (15 if is_diff else 0))),
-                        is_error=is_diff,
-                        suggested_phoneme=f"{ph} (注意发音位置)" if is_diff else None,
-                    )
-                    for ph, is_diff in phonemes
-                ] if detail_level == "full" else None
-            word_scores.append(WordScoreOut(
-                word=word,
-                score=ws,
-                phonemes=ph_list if detail_level == "full" else None,
-            ))
-        return PronunciationEvaluateResponse(
-            overall_score=ss_result.overall_score,
-            pronunciation_score=ss_result.pronunciation_score,
-            fluency_score=ss_result.fluency_score,
-            completeness_score=ss_result.completeness_score,
-            words=word_scores if detail_level == "full" else None,
-            prosody=ProsodyOut(
-                intonation_score=ss_result.prosody_score,
-                rhythm_score=ss_result.prosody_score,
-                stress_errors=[],
-            ),
-            advice=ss_result.advice,
-            reference_audio_url=f"https://dict.youdao.com/dictvoice?audio={words[0]}&type=0" if words else None,
+    if not is_ise_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="讯飞发音评测未配置，请在设置中填写 App ID / API Key / API Secret 并开通 ISE",
         )
 
-    analysis = _analyze_text(reference_text)
+    audio_bytes = await audio.read()
+    from ..services.audio_util import convert_to_wav_16k_mono
+    from ..services.iflytek_ise_service import evaluate_pronunciation as ise_evaluate
+
+    wav = convert_to_wav_16k_mono(audio_bytes, audio.content_type or "audio/webm")
+    if not wav:
+        raise HTTPException(status_code=400, detail="无法解析上传的音频")
+
+    ise_result = await ise_evaluate(wav, reference_text, language)
+    if not ise_result:
+        raise HTTPException(status_code=503, detail="讯飞发音评测失败，请检查配置与音频格式")
 
     words = [w.strip(".,!?;:\"'()") for w in reference_text.split()]
     words = [w for w in words if w]
-
     word_scores = []
+    word_map: dict[str, list] = {}
+    for ph in ise_result.phonemes:
+        word_map.setdefault(ph.word, []).append(ph)
     for word in words:
-        phonemes = _get_word_phonemes(word)
-        ws = _score_word_pronunciation(word)
-        ph_list = []
-        for ph, is_diff in phonemes:
-            ph_score = max(40, min(100, ws - (15 if is_diff else 0)))
-            ph_list.append(PhonemeScoreOut(
-                word=word,
-                word_score=ws,
-                phoneme=ph,
-                phoneme_score=ph_score,
-                is_error=is_diff,
-                suggested_phoneme=f"{ph} (注意发音位置)" if is_diff else None,
-            ))
+        plist = word_map.get(word, [])
+        if plist:
+            ph_list = [
+                PhonemeScoreOut(
+                    word=word,
+                    word_score=p.word_score,
+                    phoneme=p.phoneme,
+                    phoneme_score=p.phoneme_score,
+                    is_error=p.is_error,
+                    suggested_phoneme=p.suggested_phoneme,
+                )
+                for p in plist
+            ]
+            ws = sum(p.phoneme_score for p in plist) // len(plist)
+        else:
+            continue
         word_scores.append(WordScoreOut(
             word=word,
             score=ws,
             phonemes=ph_list if detail_level == "full" else None,
         ))
-
     return PronunciationEvaluateResponse(
-        overall_score=analysis["overall"],
-        pronunciation_score=analysis["pronunciation_score"],
-        fluency_score=analysis["fluency_score"],
-        completeness_score=analysis["completeness_score"],
+        overall_score=ise_result.overall_score,
+        pronunciation_score=ise_result.pronunciation_score,
+        fluency_score=ise_result.fluency_score,
+        completeness_score=ise_result.completeness_score,
         words=word_scores if detail_level == "full" else None,
         prosody=ProsodyOut(
-            intonation_score=analysis["prosody_score"],
-            rhythm_score=analysis["prosody_score"],
+            intonation_score=ise_result.prosody_score,
+            rhythm_score=ise_result.prosody_score,
             stress_errors=[],
         ),
-        advice=analysis["advice"],
-        reference_audio_url=f"https://cdn.example.com/audio/reference/{reference_text[:20].replace(' ', '_')}.mp3",
+        advice=ise_result.advice,
+        reference_audio_url=f"https://dict.youdao.com/dictvoice?audio={words[0]}&type=0" if words else None,
     )
 
 

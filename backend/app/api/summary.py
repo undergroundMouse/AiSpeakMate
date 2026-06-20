@@ -843,10 +843,10 @@ async def _compute_progress_provenance(
         pron_source = "none"
         fluency_source = "none"
     else:
-        ss_count = sum(1 for s in sources if s == "speechsuper")
+        real_count = sum(1 for s in sources if s in {"iflytek_ise", "speechsuper"})
         ta_count = sum(1 for s in sources if s == "text_analysis")
-        if ss_count > ta_count:
-            pron_source = fluency_source = "speechsuper"
+        if real_count > ta_count:
+            pron_source = fluency_source = "iflytek_ise"
         else:
             pron_source = fluency_source = "text_analysis"
 

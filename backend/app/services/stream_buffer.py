@@ -6,10 +6,15 @@ _SENTENCE_END = re.compile(r"[.!?]\s*$")
 
 
 class SentenceStreamBuffer:
-    """Accumulates LLM token deltas and yields complete sentences."""
+    """Accumulates LLM token deltas and yields TTS-sized chunks.
 
-    def __init__(self, max_chunk_len: int = 80):
+    Avoids flushing on every short sentence (e.g. "Sure." "OK.") which causes
+    word-by-word audio when each fragment is synthesized and played separately.
+    """
+
+    def __init__(self, min_chunk_len: int = 100, max_chunk_len: int = 220):
         self._buffer = ""
+        self._min_chunk_len = min_chunk_len
         self._max_chunk_len = max_chunk_len
 
     def add(self, delta: str) -> list[str]:
@@ -18,16 +23,7 @@ class SentenceStreamBuffer:
         self._buffer += delta
         sentences: list[str] = []
         while True:
-            match = _SENTENCE_END.search(self._buffer)
-            if match:
-                end = match.end()
-                sentence = self._buffer[:end].strip()
-                self._buffer = self._buffer[end:].lstrip()
-                if sentence:
-                    sentences.append(sentence)
-                continue
             if len(self._buffer) >= self._max_chunk_len:
-                # Flush at last space or hard split
                 split_at = self._buffer.rfind(" ", 0, self._max_chunk_len)
                 if split_at <= 0:
                     split_at = self._max_chunk_len
@@ -36,6 +32,14 @@ class SentenceStreamBuffer:
                 if chunk:
                     sentences.append(chunk)
                 continue
+
+            if len(self._buffer.strip()) >= self._min_chunk_len and _SENTENCE_END.search(self._buffer):
+                chunk = self._buffer.strip()
+                self._buffer = ""
+                if chunk:
+                    sentences.append(chunk)
+                continue
+
             break
         return sentences
 
