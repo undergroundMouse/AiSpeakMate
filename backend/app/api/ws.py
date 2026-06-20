@@ -1,5 +1,8 @@
+import asyncio
 import json
 import uuid
+import base64
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -17,11 +20,28 @@ from ..models.evaluation import (
 )
 from ..models.scene import Scene
 from ..models.session import Session, Utterance
+from ..models.summary import SessionSummary
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # in-memory active session store
 active_connections: dict[uuid.UUID, dict] = {}
+
+
+async def _get_last_opening_insight(db: AsyncSession, user_id: uuid.UUID) -> str | None:
+    result = await db.execute(
+        select(SessionSummary.opening_insight)
+        .join(Session, SessionSummary.session_id == Session.id)
+        .where(
+            Session.user_id == user_id,
+            Session.status == "completed",
+            SessionSummary.opening_insight.isnot(None),
+        )
+        .order_by(Session.started_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 async def _authenticate(websocket: WebSocket) -> uuid.UUID:
@@ -161,14 +181,10 @@ def _get_word_phonemes(word: str) -> list[tuple[str, bool]]:
 
 
 def _score_word_pronunciation(word: str) -> int:
-    """Score pronunciation difficulty for a word (higher = easier for Chinese speaker)."""
+    """Score word based on complexity (longer/more complex words means higher potential)."""
     word_lower = word.lower()
-    difficulty_penalty = 0
-    for pattern, _ in _DIFFICULT_PATTERNS:
-        if pattern in word_lower:
-            difficulty_penalty += 12
-    length_penalty = max(0, (len(word) - 5) * 3)
-    return max(40, min(100, 90 - difficulty_penalty - length_penalty))
+    length_bonus = min(10, max(0, (len(word) - 3) * 1))
+    return min(95, max(50, 75 + length_bonus))
 
 
 def _analyze_text(text: str) -> dict:
@@ -213,37 +229,68 @@ def _analyze_text(text: str) -> dict:
         "please", "let", "thanks", "thank",
     }
     word_count = len(clean_words)
-    if word_count >= 6 and has_subject:
-        completeness = 95
-    elif word_count >= 3:
-        completeness = 80
-    else:
-        completeness = 65
+    avg_word_len = sum(len(w) for w in clean_words) / max(word_count, 1)
+    sentences = max(1, text.count('.') + text.count('!') + text.count('?') + text.count('\n'))
+    wps = word_count / sentences
 
-    # Prosody: based on punctuation variety and sentence structure
+    # Vocabulary diversity (type-token ratio)
+    unique_words = len(set(w.lower() for w in clean_words))
+    ttr = unique_words / max(word_count, 1)
+
+    # Pronunciation score: based on sentence complexity & word diversity
+    speech_complexity = min(1.0, (avg_word_len - 2) / 6)
+    pronunciation_score = max(45, min(92, 60 + int(wps * 2) + int(speech_complexity * 15)))
+
+    # Fluency: weighted by words per sentence
+    fluency_score = max(40, min(90, 55 + int(wps * 3)))
+
+    # Completeness: does it form a complete thought?
+    first_word = clean_words[0].lower() if clean_words else ""
+    has_subject = first_word in {
+        "i", "you", "he", "she", "it", "we", "they",
+        "this", "that", "these", "those", "there", "the",
+        "my", "your", "his", "her", "our", "their",
+        "yes", "no", "well", "ok", "okay", "maybe", "sure",
+        "what", "when", "where", "why", "how", "who",
+        "can", "could", "would", "should", "will", "do", "does", "did",
+        "please", "let", "thanks", "thank",
+    }
+    if word_count >= 8 and has_subject:
+        completeness = 95
+    elif word_count >= 5 and has_subject:
+        completeness = 85
+    elif word_count >= 3:
+        completeness = 75
+    else:
+        completeness = 60
+
+    # Prosody: punctuation variety -> intonation awareness
     has_comma = ',' in text
     has_period = any(c in text for c in '.!?')
-    prosody_score = 65 + (10 if has_comma else 0) + (10 if has_period else 0)
-    prosody_score = min(90, prosody_score)
+    has_question = '?' in text
+    prosody_score = 65 + (10 if has_comma else 0) + (8 if has_period else 0) + (7 if has_question else 0)
+    prosody_score = min(92, prosody_score)
 
     # Overall weighted score
-    overall = int(pronunciation_score * 0.35 + fluency_score * 0.30
-                  + completeness * 0.20 + prosody_score * 0.15)
+    overall = int(pronunciation_score * 0.30 + fluency_score * 0.30
+                  + completeness * 0.25 + prosody_score * 0.15)
 
     # Generate advice
     advice_parts = []
-    if pronunciation_score < 65:
-        advice_parts.append("注意 /θ/ /ð/ /v/ 等音素的发音位置")
-    if fluency_score < 65:
-        advice_parts.append("尝试使用更长的句子，增加表达流畅度")
-    if completeness < 75:
-        advice_parts.append("尽量说完整的句子")
-    if overall >= 80:
-        advice = "发音和流畅度都很棒！继续保持。"
+    if word_count < 5:
+        advice_parts.append("尝试说更完整的句子")
+    if ttr < 0.5 and word_count > 5:
+        advice_parts.append("尝试使用更丰富的词汇")
+    if fluency_score < 60:
+        advice_parts.append("增加句子长度可以提高流利度")
+    if overall >= 85:
+        advice = "表现很棒！句子结构完整，表达流畅。"
+    elif overall >= 70:
+        advice = "继续加油，尝试使用更复杂的句型。"
     elif advice_parts:
         advice = "；".join(advice_parts[:2]) + "。"
     else:
-        advice = "表现不错，继续练习提升流利度。"
+        advice = "多练习，逐步提升表达的完整度。"
 
     return {
         "overall": overall,
@@ -799,6 +846,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 scene_id_raw = payload.get("scene_id")
                 difficulty = payload.get("difficulty", "beginner")
                 client_session_id = payload.get("session_id")
+                session_mode = payload.get("mode", "immersive")
+                if session_mode not in ("immersive", "practice"):
+                    session_mode = "immersive"
 
                 # If the client already created a session via HTTP, reuse it
                 if client_session_id:
@@ -843,8 +893,9 @@ async def websocket_endpoint(websocket: WebSocket):
                         user_id=user_id,
                         scene_id=scene.id,
                         difficulty=difficulty,
+                        mode=session_mode,
                         status="active",
-                        started_at=datetime.utcnow(),
+                        started_at=datetime.now(timezone.utc).replace(tzinfo=None),
                     )
                     db.add(session)
                     await db.commit()
@@ -856,6 +907,11 @@ async def websocket_endpoint(websocket: WebSocket):
                         "payload": {"code": 1001, "message": "Missing scene_id and no valid session_id"},
                     })
                     continue
+
+                # Persist mode on reused HTTP-created sessions
+                if payload.get("mode") and session.mode != session_mode:
+                    session.mode = session_mode
+                    await db.commit()
 
                 current_session_id = session.id
                 sequence_counter = 0
@@ -904,6 +960,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 active_connections[session.id] = {
                     "websocket": websocket,
                     "user_id": user_id,
+                    "mode": session_mode,
+                    "coaching_enabled": False,
+                    "stream_cancelled": False,
                     "interrupted_responses": set(),
                     "tts_voice": negotiated["tts_voice"],
                     "custom_role_prompt": custom_role,
@@ -928,6 +987,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     select(Utterance).where(Utterance.session_id == session.id)
                 )
                 existing_utt_count = len(existing_seq_result.scalars().all())
+
+                # Prepend reminder from last completed session (light coach loop)
+                if existing_utt_count == 0:
+                    last_insight = await _get_last_opening_insight(db, user_id)
+                    if last_insight:
+                        opening_line = f"Welcome back! {last_insight} {opening_line}"
 
                 # Only store AI opening line if this is a fresh session (no utterances yet)
                 ai_utt = None
@@ -964,6 +1029,138 @@ async def websocket_endpoint(websocket: WebSocket):
                     },
                 })
 
+            # --- RESUME SESSION (V1.1: reconnection) ---
+            elif msg_type == "resume_session":
+                resume_session_id = payload.get("session_id")
+                last_seq = payload.get("last_received_sequence", 0)
+
+                if not resume_session_id:
+                    await websocket.send_json({
+                        "type": "error",
+                        "payload": {"code": 4001, "message": "Missing session_id for resume"},
+                    })
+                    continue
+
+                try:
+                    sid = uuid.UUID(resume_session_id)
+                except (ValueError, TypeError):
+                    await websocket.send_json({
+                        "type": "error",
+                        "payload": {"code": 4001, "message": "Invalid session_id"},
+                    })
+                    continue
+
+                # Verify session exists and belongs to user
+                session_result = await db.execute(
+                    select(Session).where(Session.id == sid, Session.user_id == user_id)
+                )
+                session = session_result.scalar_one_or_none()
+                if not session or session.status != "active":
+                    await websocket.send_json({
+                        "type": "error",
+                        "payload": {"code": 4005, "message": "Session expired or not found. Please start a new session."},
+                    })
+                    continue
+
+                current_session_id = sid
+                # Restore active connection tracking
+                active_connections[current_session_id] = {
+                    "user_id": user_id,
+                    "sequence": sequence_counter,
+                    "interrupted_responses": set(),
+                }
+
+                # Replay recent messages (up to 20) after last_received_sequence
+                utt_result = await db.execute(
+                    select(Utterance)
+                    .where(Utterance.session_id == sid, Utterance.sequence > last_seq)
+                    .order_by(Utterance.sequence)
+                    .limit(20)
+                )
+                utterances = utt_result.scalars().all()
+
+                await websocket.send_json({
+                    "type": "session_resumed",
+                    "payload": {
+                        "session_id": str(sid),
+                        "replayed_count": len(utterances),
+                    },
+                })
+
+                for u in utterances:
+                    msg_type_replay = "user_message" if u.speaker == "user" else "llm_response_text"
+                    await websocket.send_json({
+                        "type": msg_type_replay,
+                        "payload": {
+                            "session_id": str(sid),
+                            "text": u.text,
+                            "sequence": u.sequence,
+                            "speaker": u.speaker,
+                        },
+                    })
+
+            # --- AUDIO CHUNK (server-side ASR) ---
+            elif msg_type == "audio_chunk":
+                if not current_session_id:
+                    await websocket.send_json({
+                        "type": "error",
+                        "payload": {"code": 1001, "message": "No active session"},
+                    })
+                    continue
+
+                from ..services.asr_service import (
+                    SessionAudioBuffer,
+                    decode_chunk,
+                    transcribe_audio,
+                )
+
+                conn = active_connections.setdefault(current_session_id, {})
+                buf: SessionAudioBuffer = conn.setdefault("audio_buffer", SessionAudioBuffer())
+
+                chunk_b64 = payload.get("audio_base64", "")
+                is_end = payload.get("is_end", False)
+                mime = payload.get("audio_mime", "audio/webm")
+
+                if chunk_b64:
+                    buf.add_chunk(decode_chunk(chunk_b64), mime)
+
+                if not is_end and len(buf.chunks) % 4 == 0 and buf.get_combined():
+                    partial_text, _ = await transcribe_audio(buf.get_combined(), mime, partial=True)
+                    if partial_text:
+                        await websocket.send_json({
+                            "type": "asr_partial",
+                            "payload": {
+                                "session_id": str(current_session_id),
+                                "text": partial_text,
+                                "is_final": False,
+                                "timestamp": datetime.utcnow().isoformat(),
+                            },
+                        })
+
+                if is_end or buf.should_finalize():
+                    audio_bytes = buf.get_combined()
+                    buf.clear()
+                    asr_text, confidence = await transcribe_audio(audio_bytes, mime) if audio_bytes else ("", 0.0)
+                    client_text = (payload.get("text") or "").strip()
+                    if not asr_text and client_text:
+                        asr_text = client_text
+                    if asr_text:
+                        try:
+                            await _process_user_message(
+                                websocket, db, current_session_id, asr_text, sequence_counter,
+                                audio_bytes=audio_bytes or None,
+                                audio_mime=mime,
+                                asr_confidence=confidence,
+                            )
+                            sequence_counter += 2
+                        except Exception as e:
+                            import traceback
+                            traceback.print_exc()
+                            await websocket.send_json({
+                                "type": "error",
+                                "payload": {"code": 2001, "message": f"Internal error: {e}"},
+                            })
+
             # --- AUDIO DATA ---
             elif msg_type == "audio_data":
                 if not current_session_id:
@@ -990,13 +1187,23 @@ async def websocket_endpoint(websocket: WebSocket):
                     })
 
                 if is_end:
-                    # If audio was provided but no ASR text, simulate recognition
-                    if not asr_text and audio_base64:
-                        asr_text = _simulate_asr_from_audio()
+                    audio_bytes = None
+                    if audio_base64:
+                        audio_bytes = base64.b64decode(audio_base64)
+                    if not asr_text and audio_bytes:
+                        from ..services.asr_service import transcribe_audio
+                        asr_text, confidence = await transcribe_audio(
+                            audio_bytes, payload.get("audio_mime", "audio/webm"),
+                        )
+                    else:
+                        confidence = 0.95
                     if asr_text:
                         try:
                             await _process_user_message(
-                                websocket, db, current_session_id, asr_text, sequence_counter
+                                websocket, db, current_session_id, asr_text, sequence_counter,
+                                audio_bytes=audio_bytes,
+                                audio_mime=payload.get("audio_mime", "audio/webm"),
+                                asr_confidence=confidence,
                             )
                             sequence_counter += 2
                         except Exception as e:
@@ -1031,16 +1238,44 @@ async def websocket_endpoint(websocket: WebSocket):
                             "payload": {"code": 2001, "message": f"Internal error: {e}"},
                         })
 
+            # --- SET COACHING (in-chat toggle) ---
+            elif msg_type == "set_coaching":
+                if not current_session_id:
+                    await websocket.send_json({
+                        "type": "error",
+                        "payload": {"code": 1001, "message": "No active session"},
+                    })
+                    continue
+                enabled = bool(payload.get("enabled", False))
+                conn = active_connections.setdefault(current_session_id, {})
+                conn["coaching_enabled"] = enabled
+                await websocket.send_json({
+                    "type": "coaching_state",
+                    "payload": {
+                        "session_id": str(current_session_id),
+                        "enabled": enabled,
+                        "effective_from": "next_user_utterance",
+                    },
+                })
+
             # --- INTERRUPT ---
             elif msg_type == "interrupt":
                 interrupt_id = payload.get("interrupt_id", "")
                 if current_session_id and current_session_id in active_connections:
+                    active_connections[current_session_id]["stream_cancelled"] = True
                     active_connections[current_session_id].setdefault(
                         "interrupted_responses", set()
                     ).add(interrupt_id)
                 await websocket.send_json({
                     "type": "interrupt_ack",
                     "payload": {"interrupt_id": interrupt_id},
+                })
+                await websocket.send_json({
+                    "type": "tts_cancelled",
+                    "payload": {
+                        "session_id": str(current_session_id) if current_session_id else "",
+                        "interrupt_id": interrupt_id,
+                    },
                 })
 
             # --- END SESSION ---
@@ -1053,16 +1288,20 @@ async def websocket_endpoint(websocket: WebSocket):
                     continue
 
                 # mark session completed
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc)
                 session_result = await db.execute(
                     select(Session).where(Session.id == current_session_id)
                 )
                 session = session_result.scalar_one_or_none()
                 if session and session.status == "active":
                     session.status = "completed"
-                    session.ended_at = now
+                    session.ended_at = now.replace(tzinfo=None)  # DB stores naive UTC
+                    # session.started_at is naive from DB; make aware for subtraction
+                    started = session.started_at
+                    if started and started.tzinfo is None:
+                        started = started.replace(tzinfo=timezone.utc)
                     session.duration_seconds = int(
-                        (now - session.started_at).total_seconds()
+                        (now - started).total_seconds()
                     )
                     await db.commit()
 
@@ -1071,8 +1310,14 @@ async def websocket_endpoint(websocket: WebSocket):
                         generate_progress_snapshot,
                         update_weakness_records,
                     )
-                    await generate_progress_snapshot(db, current_session_id)
-                    await update_weakness_records(db, current_session_id)
+                    try:
+                        await generate_progress_snapshot(db, current_session_id)
+                    except Exception as e:
+                        print(f"[Progress] generate_progress_snapshot failed: {e}")
+                    try:
+                        await update_weakness_records(db, current_session_id)
+                    except Exception as e:
+                        print(f"[Progress] update_weakness_records failed: {e}")
 
                 await websocket.send_json({
                     "type": "session_ended",
@@ -1214,56 +1459,34 @@ def _build_system_prompt(scene_data: dict | None, difficulty: str = "intermediat
     return "\n\n".join(parts)
 
 
-async def _process_user_message(
+async def _send_pronunciation_feedback(
     websocket: WebSocket,
     db: AsyncSession,
-    current_session_id: uuid.UUID,
+    session_id: uuid.UUID,
+    user_utt: Utterance,
     asr_text: str,
-    sequence_counter: int,
+    evaluation: PronunciationEvaluation,
 ):
-    """Process a final user utterance: store, evaluate, and generate AI response."""
-    # send final ASR result
-    await websocket.send_json({
-        "type": "asr_final",
-        "payload": {
-            "session_id": str(current_session_id),
-            "text": asr_text,
-            "confidence": 0.95,
-            "timestamp": datetime.utcnow().isoformat(),
-        },
-    })
+    """Build and send pronunciation_feedback WS message."""
+    from sqlalchemy import select as _sel
 
-    # store user utterance
-    user_utt = await _store_utterance(current_session_id, "user", asr_text, sequence_counter + 1)
-
-    # persist pronunciation evaluation
-    evaluation = await _store_pronunciation_evaluation(db, user_utt, asr_text)
-
-    # build word scores for the feedback message
     word_scores = []
-    if evaluation.id:
-        from sqlalchemy import select as _sel
-        ps_result = await db.execute(
-            _sel(PhonemeScore).where(PhonemeScore.evaluation_id == evaluation.id)
-        )
-        phoneme_scores = ps_result.scalars().all()
-        # group phoneme scores by word
-        word_map: dict[str, list[PhonemeScore]] = {}
-        for ps in phoneme_scores:
-            word_map.setdefault(ps.word, []).append(ps)
-        for w, plist in word_map.items():
-            word_scores.append({
-                "word": w,
-                "score": sum(p.phoneme_score for p in plist) // len(plist),
-                "error_phonemes": [
-                    p.suggested_phoneme for p in plist if p.is_error
-                ],
-            })
+    ps_result = await db.execute(
+        _sel(PhonemeScore).where(PhonemeScore.evaluation_id == evaluation.id)
+    )
+    phoneme_scores = ps_result.scalars().all()
+    word_map: dict[str, list[PhonemeScore]] = {}
+    for ps in phoneme_scores:
+        word_map.setdefault(ps.word, []).append(ps)
+    for w, plist in word_map.items():
+        word_scores.append({
+            "word": w,
+            "score": sum(p.phoneme_score for p in plist) // len(plist),
+            "error_phonemes": [p.suggested_phoneme for p in plist if p.is_error],
+        })
 
-    # send pronunciation feedback with V1.1 enhanced data
-    detail_level = "full"  # default; could be configured per session
     fb_payload = {
-        "session_id": str(current_session_id),
+        "session_id": str(session_id),
         "utterance_id": str(user_utt.id),
         "sentence_text": asr_text,
         "overall_score": evaluation.overall_score,
@@ -1272,46 +1495,93 @@ async def _process_user_message(
         "completeness_score": evaluation.completeness_score,
         "brief_tip": evaluation.advice or "Keep practicing!",
     }
-
-    if detail_level == "full" and word_scores:
-        # Include phoneme-level detail
+    if word_scores:
         fb_payload["word_scores"] = word_scores
-        # Add reference audio URL for the most problematic word
-        worst_word = min(word_scores, key=lambda w: w["score"]) if word_scores else None
-        if worst_word and worst_word["score"] < 60:
+        worst_word = min(word_scores, key=lambda w: w["score"])
+        if worst_word["score"] < 60:
             fb_payload["reference_audio_url"] = (
                 f"https://dict.youdao.com/dictvoice?audio={worst_word['word']}&type=0"
             )
 
+    await websocket.send_json({"type": "pronunciation_feedback", "payload": fb_payload})
+
+
+async def _pronunciation_eval_background(
+    websocket: WebSocket,
+    session_id: uuid.UUID,
+    user_utt_id: uuid.UUID,
+    asr_text: str,
+    audio_bytes: bytes | None,
+    audio_mime: str,
+):
+    """Run pronunciation evaluation in background when coaching is enabled."""
+    conn = active_connections.get(session_id, {})
+    if not conn.get("coaching_enabled", False):
+        return
+    db_gen = get_db()
+    db: AsyncSession = await anext(db_gen)
+    try:
+        from ..services.pronunciation_service import store_pronunciation_evaluation
+        from sqlalchemy import select as _sel
+
+        utt_result = await db.execute(_sel(Utterance).where(Utterance.id == user_utt_id))
+        user_utt = utt_result.scalar_one_or_none()
+        if not user_utt:
+            return
+        evaluation = await store_pronunciation_evaluation(
+            db, user_utt, asr_text, audio_bytes, audio_mime, use_speechsuper=True,
+        )
+        if not active_connections.get(session_id, {}).get("coaching_enabled", False):
+            return
+        await _send_pronunciation_feedback(websocket, db, session_id, user_utt, asr_text, evaluation)
+    except Exception as e:
+        logger.warning("Background pronunciation eval failed: %s", e)
+    finally:
+        await db_gen.aclose()
+
+
+async def _process_user_message(
+    websocket: WebSocket,
+    db: AsyncSession,
+    current_session_id: uuid.UUID,
+    asr_text: str,
+    sequence_counter: int,
+    audio_bytes: bytes | None = None,
+    audio_mime: str = "audio/webm",
+    asr_confidence: float = 0.95,
+):
+    """Process a final user utterance: store, evaluate, and generate AI response."""
+    conn = active_connections.get(current_session_id, {})
+    coaching_enabled = conn.get("coaching_enabled", False)
+    conn["stream_cancelled"] = False
+
+    def cancel_check() -> bool:
+        return conn.get("stream_cancelled", False)
+
     await websocket.send_json({
-        "type": "pronunciation_feedback",
-        "payload": fb_payload,
+        "type": "asr_final",
+        "payload": {
+            "session_id": str(current_session_id),
+            "text": asr_text,
+            "confidence": asr_confidence,
+            "timestamp": datetime.utcnow().isoformat(),
+        },
     })
 
-    # persist and send grammar hints with V1.1 enhanced fields
-    grammar_errors = await _store_grammar_errors(db, user_utt, asr_text)
-    for ge in grammar_errors:
-        await websocket.send_json({
-            "type": "grammar_hint",
-            "payload": {
-                "session_id": str(current_session_id),
-                "utterance_id": str(user_utt.id),
-                "original_text": ge.original_text,
-                "error_span": {"start": ge.error_span_start, "end": ge.error_span_end},
-                "correction": ge.correction,
-                "corrected_sentence": ge.corrected_sentence,
-                "hint": ge.explanation or "",
-                "severity": ge.severity or "medium",
-                "hint_type": "expression" if ge.is_expression_issue else "grammar",
-            },
-        })
+    user_utt = await _store_utterance(current_session_id, "user", asr_text, sequence_counter + 1)
 
-    # generate LLM response — try Groq first, fall back to simulated
+    if coaching_enabled:
+        asyncio.create_task(_pronunciation_eval_background(
+            websocket, current_session_id, user_utt.id, asr_text, audio_bytes, audio_mime,
+        ))
+
+    # Store grammar errors for post-session summary only (no real-time hints)
+    await _store_grammar_errors(db, user_utt, asr_text)
+
     data = await _get_session_data(db, current_session_id)
     scene_data = data["scene_data"] if data else None
     session_obj = data["session"] if data else None
 
-    # Build conversation history for LLM
     history = []
     if session_obj:
         utt_result = await db.execute(
@@ -1323,11 +1593,9 @@ async def _process_user_message(
             role = "assistant" if u.speaker == "ai" else "user"
             history.append({"role": role, "content": u.text})
 
-    # Build comprehensive system prompt from scene data
     session_difficulty = session_obj.difficulty if session_obj else "intermediate"
     system_prompt = _build_system_prompt(scene_data, difficulty=session_difficulty)
 
-    # Scene context prefix for the user message (reinforces scene awareness)
     scene_name = scene_data.get("scene_name", "") if scene_data else ""
     scene_desc = scene_data.get("description", "") if scene_data else ""
     context_prefix = ""
@@ -1339,37 +1607,52 @@ async def _process_user_message(
             ctx_parts.append(scene_desc)
         context_prefix = f"[Current scene: {' — '.join(ctx_parts)}]\n"
 
-    # Include difficulty hint in user message for additional reinforcement
     diff_hint = f"[Difficulty: {session_difficulty}]\n" if session_difficulty else ""
     contextualized_message = f"{context_prefix}{diff_hint}User says: \"{asr_text}\""
 
-    # Choose temperature based on difficulty: lower for beginners (more predictable),
-    # slightly higher for advanced (more creative/natural)
     difficulty_temperature = {
         "beginner": 0.6,
         "intermediate": 0.7,
         "advanced": 0.75,
     }
     llm_temperature = difficulty_temperature.get(session_difficulty, 0.7)
+    tts_voice_key = conn.get("tts_voice", "en-US-female")
+    resp_id = str(uuid.uuid4())
 
-    from ..services.llm_service import generate_response
-    ai_text = await generate_response(
-        contextualized_message,
+    from ..services.voice_pipeline import (
+        generate_ai_response_batch,
+        send_batch_tts,
+        stream_ai_response,
+    )
+
+    ai_text = await stream_ai_response(
+        websocket,
+        str(current_session_id),
         system_prompt,
+        contextualized_message,
         history,
-        temperature=llm_temperature,
-        max_tokens=300,
+        llm_temperature,
+        tts_voice_key,
+        resp_id,
+        cancel_check,
     )
     if not ai_text:
-        print(f"[WS] LLM returned None — falling back to simulated response. Provider: {settings.llm_provider}")
+        ai_text = await generate_ai_response_batch(
+            contextualized_message,
+            system_prompt,
+            history,
+            llm_temperature,
+            _simulate_llm_response,
+            (asr_text, scene_data),
+        )
+        if ai_text and not cancel_check():
+            await send_batch_tts(websocket, str(current_session_id), ai_text, tts_voice_key, resp_id)
 
-    # Fall back to simulated response if LLM unavailable
     if not ai_text:
         ai_text = _simulate_llm_response(asr_text, scene_data)
 
     ai_utt = await _store_utterance(current_session_id, "ai", ai_text, sequence_counter + 2)
 
-    resp_id = str(uuid.uuid4())
     await websocket.send_json({
         "type": "llm_response_text",
         "payload": {
@@ -1380,37 +1663,3 @@ async def _process_user_message(
             "interrupt_id": resp_id,
         },
     })
-
-    # TTS audio — generate real audio via Edge-TTS
-    from ..services.tts_service import text_to_speech_base64, VOICES as TTS_VOICES
-    # Use negotiated voice from session config; default to female if not set
-    tts_voice_key = "en-US-female"
-    if current_session_id and current_session_id in active_connections:
-        tts_voice_key = active_connections[current_session_id].get("tts_voice", "en-US-female")
-    print(f"[TTS] Voice key: {tts_voice_key} -> Edge-TTS: {TTS_VOICES.get(tts_voice_key, 'en-US-JennyNeural')}")
-    tts_base64 = await text_to_speech_base64(ai_text, voice=tts_voice_key)
-    if tts_base64:
-        await websocket.send_json({
-            "type": "tts_audio",
-            "payload": {
-                "session_id": str(current_session_id),
-                "stream_id": f"tts_{resp_id}",
-                "interrupt_id": resp_id,
-                "is_end": True,
-                "text": ai_text,
-                "audio_base64": tts_base64,
-                "audio_mime": "audio/mp3",
-            },
-        })
-    else:
-        # Fallback: stub without audio
-        await websocket.send_json({
-            "type": "tts_audio",
-            "payload": {
-                "session_id": str(current_session_id),
-                "stream_id": f"tts_{resp_id}",
-                "interrupt_id": resp_id,
-                "is_end": True,
-                "text": ai_text,
-            },
-        })

@@ -9,11 +9,6 @@ const router = createRouter({
       component: () => import('@/views/HomeView.vue'),
     },
     {
-      path: '/scenes/custom_detail',
-      name: 'custom-scene-detail',
-      component: () => import('@/views/SceneDetailView.vue'),
-    },
-    {
       path: '/scenes/:id',
       name: 'scene-detail',
       component: () => import('@/views/SceneDetailView.vue'),

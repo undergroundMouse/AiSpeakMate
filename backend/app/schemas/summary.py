@@ -2,6 +2,8 @@ import uuid
 from datetime import date, datetime
 from typing import Optional
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -22,10 +24,9 @@ class Highlight(BaseModel):
 
 
 class PracticeSuggestion(BaseModel):
-    title: str
-    description: str
-    resource_type: str | None = None  # "video", "article", "exercise"
-    resource_url: str | None = None
+    type: str
+    target: str
+    suggested_exercise_id: str | None = None
 
 
 class TopPronunciationError(BaseModel):
@@ -46,17 +47,47 @@ class TopGrammarError(BaseModel):
     severity: str = "medium"
 
 
+class CoachCardInsight(BaseModel):
+    type: Literal["strength", "improvement"]
+    text: str
+    detail: str | None = None
+
+
+class CoachCardResponse(BaseModel):
+    scene_name: str
+    duration_seconds: int
+    overall_score: int | None = Field(default=None, ge=0, le=100)
+    strengths: list[CoachCardInsight] = []
+    improvements: list[CoachCardInsight] = []
+    score_delta: int | None = None
+    chat_only: bool = False
+
+
+class NextPracticeOption(BaseModel):
+    kind: Literal["consolidate", "explore"]
+    scene_id: int
+    scene_name: str
+    label: str
+    reason: str
+
+
+class NextPracticeResponse(BaseModel):
+    options: list[NextPracticeOption]
+
+
 class SessionSummaryResponse(BaseModel):
     id: uuid.UUID
     session_id: uuid.UUID
     scene_name: str | None = None
     duration_seconds: int = 0
-    radar: RadarScores
+    radar_scores: RadarScores
     highlights: list[Highlight] = []
     top_pronunciation_errors: list[TopPronunciationError] = []
     top_grammar_errors: list[TopGrammarError] = []
     practice_suggestions: list[PracticeSuggestion] = []
     share_image_url: str | None = None
+    coach_card: CoachCardResponse | None = None
+    next_practice_options: list[NextPracticeOption] = []
     created_at: datetime
 
     class Config:
@@ -82,6 +113,23 @@ class WeaknessRecord(BaseModel):
     trend: str | None = None  # "rising", "falling", "stable"
 
 
+class ProgressProvenance(BaseModel):
+    pronunciation: str = "none"  # speechsuper | text_analysis | none
+    fluency: str = "none"
+    grammar: str = "none"  # evaluation | none
+    vocabulary: str = "none"  # heuristic | none
+    interaction: str = "none"  # heuristic | none
+    strengths: str = "none"  # computed | none
+
+
+class DimensionAvailable(BaseModel):
+    pronunciation: bool = False
+    fluency: bool = False
+    grammar: bool = False
+    vocabulary: bool = False
+    interaction: bool = False
+
+
 class UserProgressResponse(BaseModel):
     user_id: uuid.UUID
     overall_rating: str  # "A1"-"C2" or "beginner"-"advanced"
@@ -91,17 +139,21 @@ class UserProgressResponse(BaseModel):
     snapshots: list[ProgressSnapshot] = []
     weaknesses: list[WeaknessRecord] = []
     strengths: list[dict] = []
+    data_provenance: ProgressProvenance = Field(default_factory=ProgressProvenance)
+    dimension_available: DimensionAvailable = Field(default_factory=DimensionAvailable)
 
 
 # --- Achievements ---
 
 class AchievementInfo(BaseModel):
-    achievement_key: str
+    id: str
     title: str
     description: str
-    icon: str | None = None
+    current_progress: int = 0
+    target: int = 100
     unlocked_at: datetime | None = None
-    progress: float = 0.0  # 0.0 - 1.0
+    icon_url: str | None = None
+    icon: str | None = None
 
     class Config:
         from_attributes = True
@@ -110,7 +162,6 @@ class AchievementInfo(BaseModel):
 class AchievementListResponse(BaseModel):
     user_id: uuid.UUID
     achievements: list[AchievementInfo] = []
-    total_locked: int = 0
 
 
 # --- Progress Trend ---
@@ -121,8 +172,18 @@ class TrendPoint(BaseModel):
     dimension: str | None = None  # None when dimension="all"
 
 
+class ForecastPoint(BaseModel):
+    date: date
+    score: int
+    confidence_interval_lower: int
+    confidence_interval_upper: int
+
+
 class ProgressTrendResponse(BaseModel):
-    points: list[TrendPoint] = []
+    dimension: str = "total_score"
+    granularity: str = "daily"
+    data_points: list[TrendPoint] = []
+    forecast: list[ForecastPoint] = []
 
 
 # --- Weakness Distribution ---
@@ -130,12 +191,12 @@ class ProgressTrendResponse(BaseModel):
 class WeaknessDistItem(BaseModel):
     category: str
     item: str
-    total_error_count: int
+    error_count: int
     trend: str | None = None
+    suggested_exercise_id: str | None = None
 
 
 class WeaknessDistResponse(BaseModel):
     user_id: uuid.UUID
-    period_start: date
-    period_end: date
-    items: list[WeaknessDistItem] = []
+    period: str = "last_month"
+    weakness_matrix: list[WeaknessDistItem] = []

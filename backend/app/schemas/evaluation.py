@@ -50,6 +50,7 @@ class PronunciationEvaluateResponse(BaseModel):
     words: list[WordScoreOut] | None = None
     prosody: ProsodyOut | None = None
     advice: str | None = None
+    reference_audio_url: str | None = None
 
 
 class PronunciationDetailResponse(BaseModel):

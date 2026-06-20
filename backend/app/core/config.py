@@ -24,9 +24,27 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     groq_model: str = "llama-3.1-70b-versatile"
 
-    # Pronunciation
-    speechsuper_api_key: str = ""
+    # Pronunciation — SpeechSuper
+    speechsuper_app_key: str = ""
+    speechsuper_secret_key: str = ""
+    speechsuper_api_key: str = ""  # legacy alias for app key
     speechsuper_endpoint: str = "https://api.speechsuper.com"
+
+    # ASR — Faster-Whisper
+    whisper_model: str = "base"
+    whisper_device: str = "cpu"
+    whisper_compute_type: str = "int8"
+
+    # TTS — iFlytek Online
+    iflytek_app_id: str = ""
+    iflytek_api_key: str = ""
+    iflytek_api_secret: str = ""
+    iflytek_tts_host: str = "tts-api.xfyun.cn"
+    iflytek_tts_path: str = "/v2/tts"
+
+    @property
+    def speechsuper_app_key_resolved(self) -> str:
+        return self.speechsuper_app_key or self.speechsuper_api_key
 
     class Config:
         env_file = ".env"

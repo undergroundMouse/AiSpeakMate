@@ -36,4 +36,9 @@ export const authApi = {
   me() {
     return apiClient.get('/auth/me').then((res) => res.data);
   },
+
+  /** V1.1: Refresh JWT token before expiry */
+  refreshToken(): Promise<AuthResponse> {
+    return apiClient.post('/auth/refresh').then((res) => res.data);
+  },
 };

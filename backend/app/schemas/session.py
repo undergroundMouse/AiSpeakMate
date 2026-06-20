@@ -9,6 +9,7 @@ class StartSessionRequest(BaseModel):
     scene_id: Optional[int] = None
     custom_scene_id: Optional[UUID] = None
     difficulty: str = "intermediate"
+    mode: str = "immersive"
 
 
 class SessionResponse(BaseModel):
@@ -16,6 +17,7 @@ class SessionResponse(BaseModel):
     scene_id: Optional[int] = None
     custom_scene_id: Optional[UUID] = None
     difficulty: str
+    mode: str = "immersive"
     status: str
     started_at: datetime
 
@@ -37,16 +39,16 @@ class SessionHistory(BaseModel):
     session_id: UUID
     scene_id: Optional[int] = None
     scene_name: Optional[str] = None
-    difficulty: str
-    status: str
-    started_at: datetime
-    ended_at: Optional[datetime] = None
-    utterance_count: int = 0
+    date: datetime | None = None
+    duration_seconds: int = 0
+    total_score: int = 0
 
     class Config:
         from_attributes = True
 
 
 class SessionListResponse(BaseModel):
+    data: list[SessionHistory]
     total: int
-    sessions: list[SessionHistory]
+    page: int
+    page_size: int

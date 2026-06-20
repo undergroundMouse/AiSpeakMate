@@ -23,44 +23,45 @@ from .dependencies import get_current_user
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
-@router.get("", response_model=SessionListResponse)
-async def list_sessions(
+async def _list_sessions_impl(
+    user: User,
+    db: AsyncSession,
+    page: int = 1,
+    page_size: int = 20,
     status: str | None = None,
-    skip: int = 0,
-    limit: int = 20,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """List sessions for the current user with optional status filter and pagination."""
+    scene_id: int | None = None,
+) -> SessionListResponse:
+    """Shared implementation for listing user sessions with page-based pagination."""
+    page = max(1, page)
+    page_size = max(1, min(100, page_size))
+    offset = (page - 1) * page_size
+
     count_q = select(func.count(Session.id)).where(Session.user_id == user.id)
     if status:
         count_q = count_q.where(Session.status == status)
+    if scene_id:
+        count_q = count_q.where(Session.scene_id == scene_id)
 
     total_result = await db.execute(count_q)
     total = total_result.scalar() or 0
 
     rows_q = (
-        select(
-            Session,
-            func.count(Utterance.id).label("utt_count"),
-        )
-        .outerjoin(Utterance, Utterance.session_id == Session.id)
+        select(Session)
         .where(Session.user_id == user.id)
-        .group_by(Session.id)
         .order_by(Session.started_at.desc())
-        .offset(skip)
-        .limit(limit)
+        .offset(offset)
+        .limit(page_size)
     )
     if status:
         rows_q = rows_q.where(Session.status == status)
+    if scene_id:
+        rows_q = rows_q.where(Session.scene_id == scene_id)
 
     rows_result = await db.execute(rows_q)
-    rows = rows_result.all()
+    rows = rows_result.scalars().all()
 
     sessions: list[SessionHistory] = []
-    for row in rows:
-        sess = row[0]
-        utt_count = row[1]
+    for sess in rows:
         scene_name = None
         if sess.scene_id:
             scene_result = await db.execute(
@@ -72,15 +73,29 @@ async def list_sessions(
                 session_id=sess.id,
                 scene_id=sess.scene_id,
                 scene_name=scene_name,
-                difficulty=sess.difficulty,
-                status=sess.status,
-                started_at=sess.started_at,
-                ended_at=sess.ended_at,
-                utterance_count=utt_count,
+                date=sess.started_at,
+                duration_seconds=sess.duration_seconds or 0,
+                total_score=0,
             )
         )
 
-    return SessionListResponse(total=total, sessions=sessions)
+    return SessionListResponse(
+        data=sessions, total=total, page=page, page_size=page_size,
+    )
+
+
+@router.get("", response_model=SessionListResponse)
+async def list_sessions(
+    page: int = 1,
+    page_size: int = 20,
+    status: str | None = None,
+    scene_id: int | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List sessions for the current user with optional filters and pagination."""
+    return await _list_sessions_impl(user, db, page=page, page_size=page_size, status=status, scene_id=scene_id)
+
 
 @router.post("/start", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
 async def start_session(
@@ -99,6 +114,7 @@ async def start_session(
         scene_id=body.scene_id,
         custom_scene_id=body.custom_scene_id,
         difficulty=body.difficulty,
+        mode=body.mode if body.mode in ("immersive", "practice") else "immersive",
     )
     db.add(session)
     await db.commit()
@@ -108,6 +124,7 @@ async def start_session(
         scene_id=session.scene_id,
         custom_scene_id=session.custom_scene_id,
         difficulty=session.difficulty,
+        mode=session.mode,
         status=session.status,
         started_at=session.started_at,
     )
@@ -210,21 +227,14 @@ async def list_history(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(
-            Session,
-            func.count(Utterance.id).label("utt_count"),
-        )
-        .outerjoin(Utterance, Utterance.session_id == Session.id)
+        select(Session)
         .where(Session.user_id == user.id)
-        .group_by(Session.id)
         .order_by(Session.started_at.desc())
         .limit(50)
     )
-    rows = result.all()
+    sessions = result.scalars().all()
     history: list[SessionHistory] = []
-    for row in rows:
-        sess = row[0]
-        utt_count = row[1]
+    for sess in sessions:
         scene_name = None
         if sess.scene_id:
             scene_result = await db.execute(select(Scene.name).where(Scene.id == sess.scene_id))
@@ -234,11 +244,9 @@ async def list_history(
                 session_id=sess.id,
                 scene_id=sess.scene_id,
                 scene_name=scene_name,
-                difficulty=sess.difficulty,
-                status=sess.status,
-                started_at=sess.started_at,
-                ended_at=sess.ended_at,
-                utterance_count=utt_count,
+                date=sess.started_at,
+                duration_seconds=sess.duration_seconds or 0,
+                total_score=0,
             )
         )
     return history

@@ -39,12 +39,21 @@ export const useChatStore = defineStore('chat', () => {
   const ttsEnabled = ref(true);
   const currentSessionId = ref<string | null>(null);
   const sceneId = ref<number | null>(null);
+  const coachingEnabled = ref(false);
+
+  const COACHING_PREF_KEY = 'coachingTogglePref';
 
   let ws: WebSocket | null = null;
   let messageIdCounter = 0;
   let currentInterruptId: string | null = null;
   let currentAudio: HTMLAudioElement | null = null;
-  let playbackSpeed = 0.9;
+  let playbackSpeed = 1.0;
+
+  // Streaming TTS queue (immersive mode)
+  let ttsQueue: Blob[] = [];
+  let ttsPlaying = false;
+  let streamingInterruptId: string | null = null;
+  let streamAiMsgId: string | null = null;
 
   function setPlaybackSpeed(speed: number) {
     playbackSpeed = speed;
@@ -125,7 +134,66 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function clearTtsQueue() {
+    ttsQueue = [];
+    ttsPlaying = false;
+  }
+
+  function enqueueTtsChunk(base64: string, mime: string) {
+    if (!ttsEnabled.value) return;
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    ttsQueue.push(new Blob([bytes], { type: mime || 'audio/mp3' }));
+    playNextTtsChunk();
+  }
+
+  function playNextTtsChunk() {
+    if (ttsPlaying || ttsQueue.length === 0 || !ttsEnabled.value) return;
+    ttsPlaying = true;
+    isAiSpeaking.value = true;
+    const blob = ttsQueue.shift()!;
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.playbackRate = playbackSpeed;
+    currentAudio = audio;
+    isPaused.value = false;
+    const lastAiMsg = [...messages.value].reverse().find((m) => m.role === 'assistant');
+    if (lastAiMsg) {
+      lastAiMsg.audioBlob = blob;
+      lastAiMsg.audioUrl = url;
+    }
+    audio.onended = () => {
+      URL.revokeObjectURL(url);
+      currentAudio = null;
+      ttsPlaying = false;
+      if (ttsQueue.length === 0) {
+        isAiSpeaking.value = false;
+      } else {
+        playNextTtsChunk();
+      }
+    };
+    audio.play().catch(() => {
+      ttsPlaying = false;
+      isAiSpeaking.value = false;
+    });
+  }
+
+  function sendInterrupt() {
+    if (ws && ws.readyState === WebSocket.OPEN && streamingInterruptId) {
+      ws.send(JSON.stringify({
+        type: 'interrupt',
+        payload: {
+          interrupt_id: streamingInterruptId,
+          session_id: currentSessionId.value,
+        },
+      }));
+    }
+    clearTtsQueue();
+  }
+
   function stopSpeaking() {
+    sendInterrupt();
     if (currentAudio) {
       currentAudio.pause();
       currentAudio = null;
@@ -144,14 +212,23 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function connect(sessionId: string, token: string, options?: { sceneId?: number }) {
+  function connect(
+    sessionId: string,
+    token: string,
+    options?: { sceneId?: number },
+  ) {
     if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) {
       return;
     }
 
     currentSessionId.value = sessionId;
     sceneId.value = options?.sceneId ?? null;
+    const savedPref = localStorage.getItem(COACHING_PREF_KEY);
+    coachingEnabled.value = savedPref === 'true';
     connectionStatus.value = { connected: false, connecting: true, error: null };
+    clearTtsQueue();
+    streamAiMsgId = null;
+    streamingInterruptId = null;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = `${protocol}//localhost:8000/api/v1/ws?token=${token}`;
@@ -159,7 +236,6 @@ export const useChatStore = defineStore('chat', () => {
     ws = new WebSocket(url);
 
     ws.onopen = () => {
-      // Send start_session handshake per protocol
       ws!.send(JSON.stringify({
         type: 'start_session',
         payload: {
@@ -172,6 +248,9 @@ export const useChatStore = defineStore('chat', () => {
           custom_scene: JSON.parse(sessionStorage.getItem('activeCustomScene') || 'null'),
         },
       }));
+      if (coachingEnabled.value) {
+        sendSetCoaching(true);
+      }
     };
 
     ws.onmessage = (event) => {
@@ -185,6 +264,25 @@ export const useChatStore = defineStore('chat', () => {
         const payload = data.payload || {};
 
         switch (data.type) {
+          case 'asr_partial': {
+            const partialText = payload.text;
+            if (partialText) {
+              const lastMsg = messages.value[messages.value.length - 1];
+              if (lastMsg?.role === 'user' && lastMsg.isTemporary) {
+                lastMsg.content = partialText;
+              } else {
+                messages.value.push({
+                  id: `user-${++messageIdCounter}`,
+                  role: 'user',
+                  content: partialText,
+                  timestamp: new Date().toISOString(),
+                  isTemporary: true,
+                });
+              }
+            }
+            break;
+          }
+
           case 'tts_audio': {
             // Single TTS trigger: Edge-TTS audio if available, SpeechSynthesis fallback
             const payload = data.payload || {};
@@ -259,33 +357,89 @@ export const useChatStore = defineStore('chat', () => {
             break;
           }
 
+          case 'llm_response_delta': {
+            const delta = payload.text || '';
+            streamingInterruptId = payload.interrupt_id || streamingInterruptId;
+            let aiMsg = streamAiMsgId
+              ? messages.value.find((m) => m.id === streamAiMsgId)
+              : undefined;
+            if (!aiMsg) {
+              const newId = payload.interrupt_id || `ai-${++messageIdCounter}`;
+              streamAiMsgId = newId;
+              aiMsg = {
+                id: newId,
+                role: 'assistant',
+                content: '',
+                timestamp: new Date().toISOString(),
+                isTemporary: true,
+              };
+              messages.value.push(aiMsg);
+            }
+            if (aiMsg) {
+              aiMsg.content += delta;
+            }
+            isAiSpeaking.value = true;
+            break;
+          }
+
+          case 'tts_audio_chunk': {
+            if (!ttsEnabled.value) break;
+            streamingInterruptId = payload.interrupt_id || streamingInterruptId;
+            if (payload.audio_base64) {
+              enqueueTtsChunk(payload.audio_base64, payload.audio_mime || 'audio/mp3');
+            }
+            break;
+          }
+
+          case 'tts_cancelled': {
+            clearTtsQueue();
+            if (currentAudio) {
+              currentAudio.pause();
+              currentAudio = null;
+            }
+            isAiSpeaking.value = false;
+            break;
+          }
+
           case 'llm_response_text': {
             const payload = data.payload || {};
             currentInterruptId = payload.interrupt_id || null;
 
             const lastMsg = messages.value[messages.value.length - 1];
             if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isTemporary) {
-              lastMsg.content += payload.text || '';
-              if (payload.is_final) {
-                lastMsg.isTemporary = false;
-                lastMsg.id = payload.interrupt_id || lastMsg.id;
-              }
-            } else {
+              lastMsg.content = payload.text || lastMsg.content;
+              lastMsg.isTemporary = false;
+              lastMsg.id = payload.interrupt_id || lastMsg.id;
+            } else if (!streamAiMsgId || !messages.value.find((m) => m.id === streamAiMsgId)) {
               messages.value.push({
                 id: payload.interrupt_id || `ai-${++messageIdCounter}`,
                 role: 'assistant',
                 content: payload.text || '',
                 timestamp: new Date().toISOString(),
-                isTemporary: !payload.is_final,
+                isTemporary: false,
               });
+            } else {
+              const streamed = messages.value.find((m) => m.id === streamAiMsgId);
+              if (streamed) {
+                streamed.content = payload.text || streamed.content;
+                streamed.isTemporary = false;
+              }
             }
+            streamAiMsgId = null;
+            currentInterruptId = payload.interrupt_id || null;
             if (!payload.is_final) {
               isAiSpeaking.value = true;
             }
             break;
           }
 
+          case 'coaching_state': {
+            coachingEnabled.value = !!payload.enabled;
+            break;
+          }
+
           case 'pronunciation_feedback': {
+            if (!coachingEnabled.value) break;
             const payload = data.payload || {};
             const lastUserMsg = [...messages.value].reverse().find((m) => m.role === 'user');
             if (lastUserMsg) {
@@ -294,22 +448,9 @@ export const useChatStore = defineStore('chat', () => {
             break;
           }
 
-          case 'grammar_hint': {
-            const payload = data.payload || {};
-            const lastUserMsg = [...messages.value].reverse().find((m) => m.role === 'user');
-            if (lastUserMsg) {
-              if (!lastUserMsg.corrections) lastUserMsg.corrections = [];
-              lastUserMsg.corrections.push({
-                original: payload.original_text || '',
-                corrected: payload.correction || '',
-                explanation: payload.hint || '',
-                correctedSentence: payload.corrected_sentence || '',
-                severity: payload.severity || 'medium',
-                type: payload.hint_type === 'expression' ? 'vocabulary' : 'grammar',
-              });
-            }
+          case 'grammar_hint':
+            // Real-time grammar hints disabled; grammar available post-session only
             break;
-          }
 
           case 'session_ended': {
             connectionStatus.value.error = 'Session ended by server.';
@@ -349,6 +490,23 @@ export const useChatStore = defineStore('chat', () => {
       connectionStatus.value = { connected: false, connecting: false, error: null };
       ws = null;
     };
+  }
+
+  function sendSetCoaching(enabled: boolean) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+      type: 'set_coaching',
+      payload: {
+        session_id: currentSessionId.value,
+        enabled,
+      },
+    }));
+  }
+
+  function setCoachingEnabled(enabled: boolean) {
+    coachingEnabled.value = enabled;
+    localStorage.setItem(COACHING_PREF_KEY, enabled ? 'true' : 'false');
+    sendSetCoaching(enabled);
   }
 
   function sendEndSession() {
@@ -399,6 +557,47 @@ export const useChatStore = defineStore('chat', () => {
     nextTick(() => {
       // Scroll handled by view component
     });
+  }
+
+  function sendAudioChunk(audioBlob: Blob, isEnd: boolean, text?: string) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(',')[1];
+      ws!.send(JSON.stringify({
+        type: 'audio_chunk',
+        payload: {
+          session_id: currentSessionId.value,
+          audio_base64: base64,
+          audio_mime: audioBlob.type || 'audio/webm',
+          is_end: isEnd,
+          text: text || undefined,
+        },
+      }));
+    };
+    reader.readAsDataURL(audioBlob);
+  }
+
+  function finalizeAudioRecording(audioBlob: Blob, text?: string) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      connectionStatus.value.error = 'Not connected to chat server';
+      return;
+    }
+
+    stopSpeaking();
+
+    const userMsg: ChatMessage = {
+      id: `user-${++messageIdCounter}`,
+      role: 'user',
+      content: text?.trim() || '...',
+      timestamp: new Date().toISOString(),
+      isTemporary: true,
+      audioBlob,
+      audioUrl: URL.createObjectURL(audioBlob),
+    };
+    messages.value.push(userMsg);
+
+    sendAudioChunk(audioBlob, true, text?.trim());
   }
 
   function sendAudio(audioBlob: Blob) {
@@ -477,10 +676,14 @@ export const useChatStore = defineStore('chat', () => {
     ttsEnabled,
     currentSessionId,
     sceneId,
+    coachingEnabled,
     connect,
     disconnect,
     sendMessage,
     sendAudio,
+    sendAudioChunk,
+    finalizeAudioRecording,
+    setCoachingEnabled,
     sendMessageWithAudio,
     playMessageAudio,
     speakText,

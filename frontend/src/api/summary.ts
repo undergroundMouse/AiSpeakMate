@@ -1,5 +1,6 @@
 import apiClient from './client';
 
+// --- Radar Scores ---
 export interface RadarScores {
   fluency: number;
   vocabulary: number;
@@ -8,19 +9,21 @@ export interface RadarScores {
   interaction: number;
 }
 
+// --- Highlight ---
 export interface Highlight {
   title: string;
   description: string;
   example_sentence?: string;
 }
 
+// --- Practice Suggestion (V1.1) ---
 export interface PracticeSuggestion {
-  title: string;
-  description: string;
-  resource_type?: string;
-  resource_url?: string;
+  type: string;
+  target: string;
+  suggested_exercise_id: string | null;
 }
 
+// --- Pronunciation Error ---
 export interface PronunciationErrorItem {
   utterance_id: string;
   sentence: string;
@@ -28,6 +31,7 @@ export interface PronunciationErrorItem {
   detail_url: string;
 }
 
+// --- Grammar Error ---
 export interface GrammarErrorItem {
   utterance_id: string;
   original: string;
@@ -39,20 +43,53 @@ export interface GrammarErrorItem {
   severity: string;
 }
 
+// --- Coach Card (light coach loop) ---
+export interface CoachCardInsight {
+  type: 'strength' | 'improvement';
+  text: string;
+  detail?: string | null;
+}
+
+export interface CoachCard {
+  scene_name: string;
+  duration_seconds: number;
+  overall_score: number | null;
+  strengths: CoachCardInsight[];
+  improvements: CoachCardInsight[];
+  score_delta: number | null;
+  chat_only?: boolean;
+}
+
+export interface NextPracticeOption {
+  kind: 'consolidate' | 'explore';
+  scene_id: number;
+  scene_name: string;
+  label: string;
+  reason: string;
+}
+
+export interface NextPracticeResponse {
+  options: NextPracticeOption[];
+}
+
+// --- Session Summary (V1.1: radar_scores) ---
 export interface SessionSummary {
   id: string;
   session_id: string;
   scene_name: string | null;
   duration_seconds: number;
-  radar: RadarScores;
+  radar_scores: RadarScores;
   highlights: Highlight[];
   top_pronunciation_errors: PronunciationErrorItem[];
   top_grammar_errors: GrammarErrorItem[];
   practice_suggestions: PracticeSuggestion[];
   share_image_url: string | null;
+  coach_card?: CoachCard | null;
+  next_practice_options?: NextPracticeOption[];
   created_at: string;
 }
 
+// --- Progress Snapshot ---
 export interface ProgressSnapshot {
   snapshot_date: string;
   total_score: number;
@@ -61,6 +98,7 @@ export interface ProgressSnapshot {
   total_duration_seconds: number;
 }
 
+// --- Weakness Record ---
 export interface WeaknessRecord {
   period_start: string;
   period_end: string;
@@ -68,6 +106,24 @@ export interface WeaknessRecord {
   item: string;
   error_count: number;
   trend: string | null;
+}
+
+// --- User Progress ---
+export interface ProgressProvenance {
+  pronunciation: 'speechsuper' | 'text_analysis' | 'none';
+  fluency: 'speechsuper' | 'text_analysis' | 'none';
+  grammar: 'evaluation' | 'none';
+  vocabulary: 'heuristic' | 'none';
+  interaction: 'heuristic' | 'none';
+  strengths: 'computed' | 'none';
+}
+
+export interface DimensionAvailable {
+  pronunciation: boolean;
+  fluency: boolean;
+  grammar: boolean;
+  vocabulary: boolean;
+  interaction: boolean;
 }
 
 export interface UserProgress {
@@ -79,31 +135,46 @@ export interface UserProgress {
   snapshots: ProgressSnapshot[];
   weaknesses: WeaknessRecord[];
   strengths: Record<string, unknown>[];
+  data_provenance?: ProgressProvenance;
+  dimension_available?: DimensionAvailable;
 }
 
+// --- Achievement (V1.1) ---
 export interface AchievementInfo {
-  achievement_key: string;
+  id: string;
   title: string;
   description: string;
-  icon: string | null;
+  current_progress: number;
+  target: number;
   unlocked_at: string | null;
-  progress: number;
+  icon_url: string | null;
+  icon?: string | null;
 }
 
 export interface AchievementList {
   user_id: string;
   achievements: AchievementInfo[];
-  total_locked: number;
 }
 
+// --- Trend ---
 export interface TrendPoint {
   date: string;
   score: number;
   dimension: string | null;
 }
 
+export interface ForecastPoint {
+  date: string;
+  score: number;
+  confidence_interval_lower: number;
+  confidence_interval_upper: number;
+}
+
 export interface ProgressTrend {
-  points: TrendPoint[];
+  dimension: string;
+  granularity: string;
+  data_points: TrendPoint[];
+  forecast: ForecastPoint[];
 }
 
 export interface TrendParams {
@@ -111,26 +182,42 @@ export interface TrendParams {
   end_date: string;
   dimension?: string;
   granularity?: string;
+  include_forecast?: boolean;
 }
 
+// --- Weakness Distribution (V1.1) ---
 export interface WeaknessDistItem {
   category: string;
   item: string;
-  total_error_count: number;
+  error_count: number;
   trend: string | null;
+  suggested_exercise_id: string | null;
 }
 
 export interface WeaknessDistResponse {
   user_id: string;
-  period_start: string;
-  period_end: string;
-  items: WeaknessDistItem[];
+  period: string;
+  weakness_matrix: WeaknessDistItem[];
 }
 
 export interface WeaknessDistParams {
   start_date: string;
   end_date: string;
   category?: string;
+}
+
+// --- Review Plan ---
+export interface ReviewPlanItem {
+  type: string;
+  target: string;
+  exercise_ids: string[];
+  estimated_minutes: number;
+}
+
+export interface ReviewPlan {
+  plan_id: string;
+  generated_at: string;
+  items: ReviewPlanItem[];
 }
 
 export const summaryApi = {
@@ -140,25 +227,40 @@ export const summaryApi = {
       .then((res) => res.data);
   },
 
-  getProgress() {
-    return apiClient.get<UserProgress>('/progress').then((res) => res.data);
-  },
-
-  getAchievements() {
-    return apiClient.get<AchievementList>('/achievements').then((res) => res.data);
-  },
-
-  getProgressTrend(params: TrendParams) {
+  getNextPractice(userId: string) {
     return apiClient
-      .get<ProgressTrend>('/progress/trend', { params })
+      .get<NextPracticeResponse>(`/users/${userId}/next-practice`)
       .then((res) => res.data);
   },
 
-  getWeaknessDistribution(params: WeaknessDistParams) {
+  getProgress(userId: string) {
     return apiClient
-      .get<WeaknessDistResponse>('/progress/weaknesses/distribution', { params })
+      .get<UserProgress>(`/users/${userId}/progress`)
+      .then((res) => res.data);
+  },
+
+  getAchievements(userId: string) {
+    return apiClient
+      .get<AchievementList>(`/users/${userId}/achievements`)
+      .then((res) => res.data);
+  },
+
+  getProgressTrend(userId: string, params: TrendParams) {
+    return apiClient
+      .get<ProgressTrend>(`/users/${userId}/progress/trend`, { params })
+      .then((res) => res.data);
+  },
+
+  getWeaknessDistribution(userId: string, params: WeaknessDistParams) {
+    return apiClient
+      .get<WeaknessDistResponse>(`/users/${userId}/progress/weakness-distribution`, { params })
+      .then((res) => res.data);
+  },
+
+  /** V1.1: Get personalized review plan */
+  getReviewPlan(userId: string) {
+    return apiClient
+      .get<ReviewPlan>(`/users/${userId}/review-plan`)
       .then((res) => res.data);
   },
 };
-
-

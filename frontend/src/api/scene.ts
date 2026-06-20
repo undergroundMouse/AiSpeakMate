@@ -54,10 +54,14 @@ export interface CustomSceneRequest {
 }
 
 export interface CustomSceneResponse {
+  scene_id: string;  // tmp_ prefixed temporary ID per V1.1 spec
   custom_scene_id: string;
   topic: string;
+  description: string;
   role_prompt: string;
   opening_line: string;
+  vocab_list?: VocabItem[];
+  sentence_patterns?: SentencePatternItem[];
 }
 
 export const sceneApi = {

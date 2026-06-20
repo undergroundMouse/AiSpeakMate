@@ -1,4 +1,3 @@
-import random
 import uuid
 from datetime import datetime, timezone
 
@@ -47,46 +46,112 @@ async def evaluate_pronunciation(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Evaluate pronunciation of a single sentence.
-    Accepts audio upload (WAV/MP3) and returns detailed scoring.
+    Evaluate pronunciation of a single sentence via SpeechSuper when configured,
+    otherwise fall back to text-analysis.
     """
-    # Simulated evaluation result
-    overall = random.randint(55, 95)
+    audio_bytes = await audio.read()
+    from ..services.audio_util import convert_to_wav_16k_mono
+    from ..services.speechsuper_service import evaluate_pronunciation as ss_evaluate
+    from ..api.ws import _analyze_text, _get_word_phonemes, _score_word_pronunciation
 
-    words = reference_text.split()
+    wav = convert_to_wav_16k_mono(audio_bytes, audio.content_type or "audio/webm")
+    ss_result = await ss_evaluate(wav, reference_text, language) if wav else None
+
+    if ss_result:
+        words = [w.strip(".,!?;:\"'()") for w in reference_text.split()]
+        words = [w for w in words if w]
+        word_scores = []
+        word_map: dict[str, list] = {}
+        for ph in ss_result.phonemes:
+            word_map.setdefault(ph.word, []).append(ph)
+        for word in words:
+            plist = word_map.get(word, [])
+            if plist:
+                ph_list = [
+                    PhonemeScoreOut(
+                        word=word,
+                        word_score=p.word_score,
+                        phoneme=p.phoneme,
+                        phoneme_score=p.phoneme_score,
+                        is_error=p.is_error,
+                        suggested_phoneme=p.suggested_phoneme,
+                    )
+                    for p in plist
+                ]
+                ws = sum(p.phoneme_score for p in plist) // len(plist)
+            else:
+                phonemes = _get_word_phonemes(word)
+                ws = _score_word_pronunciation(word)
+                ph_list = [
+                    PhonemeScoreOut(
+                        word=word,
+                        word_score=ws,
+                        phoneme=ph,
+                        phoneme_score=max(40, min(100, ws - (15 if is_diff else 0))),
+                        is_error=is_diff,
+                        suggested_phoneme=f"{ph} (注意发音位置)" if is_diff else None,
+                    )
+                    for ph, is_diff in phonemes
+                ] if detail_level == "full" else None
+            word_scores.append(WordScoreOut(
+                word=word,
+                score=ws,
+                phonemes=ph_list if detail_level == "full" else None,
+            ))
+        return PronunciationEvaluateResponse(
+            overall_score=ss_result.overall_score,
+            pronunciation_score=ss_result.pronunciation_score,
+            fluency_score=ss_result.fluency_score,
+            completeness_score=ss_result.completeness_score,
+            words=word_scores if detail_level == "full" else None,
+            prosody=ProsodyOut(
+                intonation_score=ss_result.prosody_score,
+                rhythm_score=ss_result.prosody_score,
+                stress_errors=[],
+            ),
+            advice=ss_result.advice,
+            reference_audio_url=f"https://dict.youdao.com/dictvoice?audio={words[0]}&type=0" if words else None,
+        )
+
+    analysis = _analyze_text(reference_text)
+
+    words = [w.strip(".,!?;:\"'()") for w in reference_text.split()]
+    words = [w for w in words if w]
+
     word_scores = []
-    for i, word in enumerate(words):
-        ws = random.randint(50, 100)
-        phonemes = []
-        for j, ch in enumerate(word[:3]):  # simulate up to 3 phonemes per word
-            ps = random.randint(40, 100)
-            is_err = ps < 60
-            phonemes.append(PhonemeScoreOut(
+    for word in words:
+        phonemes = _get_word_phonemes(word)
+        ws = _score_word_pronunciation(word)
+        ph_list = []
+        for ph, is_diff in phonemes:
+            ph_score = max(40, min(100, ws - (15 if is_diff else 0)))
+            ph_list.append(PhonemeScoreOut(
                 word=word,
                 word_score=ws,
-                phoneme=f"/{ch}/",
-                phoneme_score=ps,
-                is_error=is_err,
-                suggested_phoneme=f"/{ch}/" if is_err else None,
+                phoneme=ph,
+                phoneme_score=ph_score,
+                is_error=is_diff,
+                suggested_phoneme=f"{ph} (注意发音位置)" if is_diff else None,
             ))
         word_scores.append(WordScoreOut(
             word=word,
             score=ws,
-            phonemes=phonemes if detail_level == "full" else None,
+            phonemes=ph_list if detail_level == "full" else None,
         ))
 
     return PronunciationEvaluateResponse(
-        overall_score=overall,
-        pronunciation_score=random.randint(50, 100),
-        fluency_score=random.randint(50, 100),
-        completeness_score=100,
+        overall_score=analysis["overall"],
+        pronunciation_score=analysis["pronunciation_score"],
+        fluency_score=analysis["fluency_score"],
+        completeness_score=analysis["completeness_score"],
         words=word_scores if detail_level == "full" else None,
         prosody=ProsodyOut(
-            intonation_score=random.randint(50, 100),
-            rhythm_score=random.randint(50, 100),
+            intonation_score=analysis["prosody_score"],
+            rhythm_score=analysis["prosody_score"],
             stress_errors=[],
         ),
-        advice="重点练习元音发音，注意单词的重音位置。",
+        advice=analysis["advice"],
+        reference_audio_url=f"https://cdn.example.com/audio/reference/{reference_text[:20].replace(' ', '_')}.mp3",
     )
 
 
