@@ -148,6 +148,7 @@ async def list_custom_scenes(
     output = []
     for s in scenes:
         # Try to parse stored AI data from prompt_snapshot
+        description = ""
         role_prompt = ""
         opening_line = ""
         vocab_list = []
@@ -156,12 +157,15 @@ async def list_custom_scenes(
             try:
                 import json as _json3
                 data = _json3.loads(s.prompt_snapshot)
+                description = data.get("description", "")
                 role_prompt = data.get("role_prompt", "")
                 opening_line = data.get("opening_line", "")
                 vocab_list = data.get("vocab_list", [])
                 sentence_patterns = data.get("sentence_patterns", [])
             except Exception:
                 role_prompt = s.prompt_snapshot
+        if not description:
+            description = f"关于{s.topic}的英语对话练习"
         if not role_prompt:
             role_prompt = f"You are {s.role or 'a conversation partner'}. Topic: {s.topic}."
         if not opening_line:
@@ -170,6 +174,7 @@ async def list_custom_scenes(
         output.append({
             "custom_scene_id": str(s.id),
             "topic": s.topic,
+            "description": description,
             "role_prompt": role_prompt,
             "opening_line": opening_line,
             "vocab_list": vocab_list,
@@ -275,6 +280,7 @@ async def create_custom_scene(
     await db.refresh(custom)
 
     # Try to generate scene with AI
+    description = ""
     role_prompt = ""
     opening_line = ""
     vocab_list = []
@@ -290,6 +296,7 @@ Difficulty: {body.difficulty}
 
 Return ONLY a JSON object with these fields (no markdown, no explanation):
 {{
+  "description": "[Brief one-sentence summary of this scene in Chinese, e.g. '在餐厅点餐的英语对话练习']",
   "role_prompt": "You are [role description]. [How to behave, tone, accent]. Keep response under 2 sentences.",
   "opening_line": "[First thing the AI says to start the conversation. Must be in English.]",
   "vocabulary": [{{"word": "...", "translation": "中文"}}, ... 5 words max],
@@ -302,6 +309,7 @@ Return ONLY a JSON object with these fields (no markdown, no explanation):
             # Clean markdown fences if present
             ai_response = ai_response.strip().removeprefix("```json").removesuffix("```").strip()
             data = _json.loads(ai_response)
+            description = data.get("description", "")
             role_prompt = data.get("role_prompt", "")
             opening_line = data.get("opening_line", "")
             for v in data.get("vocabulary", []):
@@ -315,6 +323,7 @@ Return ONLY a JSON object with these fields (no markdown, no explanation):
     if role_prompt:
         import json as _json2
         custom.prompt_snapshot = _json2.dumps({
+            "description": description,
             "role_prompt": role_prompt,
             "opening_line": opening_line,
             "vocab_list": vocab_list,
@@ -328,6 +337,8 @@ Return ONLY a JSON object with these fields (no markdown, no explanation):
         await db.commit()
 
     # Fallback if AI failed
+    if not description:
+        description = f"关于{body.topic}的英语对话练习"
     if not role_prompt:
         role_name = body.role or "an English conversation partner"
         role_prompt = f"You are {role_name}. Talk about: {body.topic}. Keep the conversation at {body.difficulty} level."
@@ -335,8 +346,10 @@ Return ONLY a JSON object with these fields (no markdown, no explanation):
         opening_line = f"Hi! Let's talk about {body.topic}. What do you think about this topic?"
 
     return {
+        "scene_id": f"tmp_{custom.id}",
         "custom_scene_id": str(custom.id),
         "topic": body.topic,
+        "description": description,
         "role_prompt": role_prompt,
         "opening_line": opening_line,
         "vocab_list": vocab_list,

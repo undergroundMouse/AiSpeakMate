@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -24,13 +24,27 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     groq_model: str = "llama-3.1-70b-versatile"
 
-    # Pronunciation
-    speechsuper_api_key: str = ""
-    speechsuper_endpoint: str = "https://api.speechsuper.com"
+    # Pronunciation — iFlytek ISE (reuses IFLYTEK_* credentials above)
+    iflytek_ise_host: str = "ise-api.xfyun.cn"
+    iflytek_ise_path: str = "/v2/open-ise"
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    # ASR — Faster-Whisper
+    whisper_model: str = "base"
+    whisper_device: str = "cpu"
+    whisper_compute_type: str = "int8"
+
+    # TTS — iFlytek Online
+    iflytek_app_id: str = ""
+    iflytek_api_key: str = ""
+    iflytek_api_secret: str = ""
+    iflytek_tts_host: str = "tts-api.xfyun.cn"
+    iflytek_tts_path: str = "/v2/tts"
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 settings = Settings()

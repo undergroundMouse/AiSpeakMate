@@ -46,13 +46,14 @@ async def generate_progress_snapshot(
     )
     pron_evals = pron_q.scalars().all()
 
-    # Compute average scores
-    if pron_evals:
+    # Compute average scores from actual evaluations only
+    has_pron_evals = bool(pron_evals)
+    if has_pron_evals:
         avg_pron = sum(e.overall_score for e in pron_evals) // len(pron_evals)
-        avg_fluency = sum(e.fluency_score or 50 for e in pron_evals) // len(pron_evals)
+        avg_fluency = sum(e.fluency_score or 0 for e in pron_evals) // len(pron_evals)
     else:
-        avg_pron = 50
-        avg_fluency = 50
+        avg_pron = 0
+        avg_fluency = 0
 
     # Count grammar errors
     grammar_q = await db.execute(
@@ -64,19 +65,32 @@ async def generate_progress_snapshot(
         )
     )
     total_grammar_errors = grammar_q.scalar() or 0
-    grammar_score = max(20, 80 - total_grammar_errors * 5)
+    grammar_score = max(0, 80 - total_grammar_errors * 5)
 
-    # Total score: weighted average
-    total_score = (avg_pron * 0.35 + avg_fluency * 0.25 + grammar_score * 0.25 + 50 * 0.15)
+    # Compute vocabulary score from actual text diversity
+    vocab_score = _compute_vocabulary_score(user_utterances)
+
+    interaction_score = min(100, utterance_count * 10)
+
+    if has_pron_evals:
+        total_score = (
+            avg_pron * 0.35 + avg_fluency * 0.25 + grammar_score * 0.25 + vocab_score * 0.15
+        )
+        dimension_scores = {
+            "fluency": min(100, avg_fluency),
+            "vocabulary": min(100, vocab_score),
+            "grammar": min(100, grammar_score),
+            "pronunciation": min(100, avg_pron),
+            "interaction": interaction_score,
+        }
+    else:
+        total_score = grammar_score * 0.55 + vocab_score * 0.30 + interaction_score * 0.15
+        dimension_scores = {
+            "vocabulary": min(100, vocab_score),
+            "grammar": min(100, grammar_score),
+            "interaction": interaction_score,
+        }
     total_score = int(min(100, max(0, total_score)))
-
-    dimension_scores = {
-        "fluency": min(100, avg_fluency),
-        "vocabulary": 50,  # placeholder — real TTR calculation would go here
-        "grammar": min(100, grammar_score),
-        "pronunciation": min(100, avg_pron),
-        "interaction": min(95, 40 + utterance_count * 10),
-    }
 
     # Check if a snapshot already exists for today
     existing_q = await db.execute(
@@ -231,3 +245,37 @@ async def _upsert_weakness(
 
     await db.flush()
     return record
+
+
+def _compute_vocabulary_score(utterances: list) -> int:
+    """Compute vocabulary diversity score from user utterances.
+
+    Uses Type-Token Ratio (TTR) with a sliding window for stability,
+    plus word-length complexity as a secondary factor.
+    """
+    if not utterances:
+        return 0
+
+    all_words: list[str] = []
+    for u in utterances:
+        text = u.text if hasattr(u, 'text') else str(u)
+        words = [w.strip(".,!?;:\"'()").lower() for w in text.split()]
+        all_words.extend(w for w in words if w and len(w) > 1)
+
+    if not all_words:
+        return 50
+
+    total = len(all_words)
+    unique = len(set(all_words))
+
+    # TTR (unique / total) — typical range for English learners: 0.4–0.85
+    ttr = unique / max(total, 1)
+
+    # Average word length complexity (longer words → richer vocabulary)
+    avg_len = sum(len(w) for w in all_words) / max(total, 1)
+    # avg_len 4–5 is typical for intermediate; above 5 is advanced
+    length_factor = min(1.0, max(0.0, (avg_len - 3.0) / 3.0))
+
+    # Combine TTR (70%) + length complexity (30%) → 0–100 scale
+    raw = (ttr * 0.7 + length_factor * 0.3) * 100
+    return int(max(0, min(100, raw)))

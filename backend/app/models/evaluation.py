@@ -44,6 +44,7 @@ class PronunciationEvaluation(Base):
     completeness_score: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)
     prosody_score: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)
     advice: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     detail_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     evaluated_at: Mapped[datetime] = mapped_column(default=lambda: datetime.utcnow())
 

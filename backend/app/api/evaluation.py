@@ -1,4 +1,3 @@
-import random
 import uuid
 from datetime import datetime, timezone
 
@@ -47,46 +46,71 @@ async def evaluate_pronunciation(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Evaluate pronunciation of a single sentence.
-    Accepts audio upload (WAV/MP3) and returns detailed scoring.
+    Evaluate pronunciation of a single sentence via iFlytek ISE (requires configuration).
     """
-    # Simulated evaluation result
-    overall = random.randint(55, 95)
+    from fastapi import HTTPException
 
-    words = reference_text.split()
+    from ..services.iflytek_ise_service import is_ise_configured
+
+    if not is_ise_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="讯飞发音评测未配置，请在设置中填写 App ID / API Key / API Secret 并开通 ISE",
+        )
+
+    audio_bytes = await audio.read()
+    from ..services.audio_util import convert_to_wav_16k_mono
+    from ..services.iflytek_ise_service import evaluate_pronunciation as ise_evaluate
+
+    wav = convert_to_wav_16k_mono(audio_bytes, audio.content_type or "audio/webm")
+    if not wav:
+        raise HTTPException(status_code=400, detail="无法解析上传的音频")
+
+    ise_result = await ise_evaluate(wav, reference_text, language)
+    if not ise_result:
+        raise HTTPException(status_code=503, detail="讯飞发音评测失败，请检查配置与音频格式")
+
+    words = [w.strip(".,!?;:\"'()") for w in reference_text.split()]
+    words = [w for w in words if w]
     word_scores = []
-    for i, word in enumerate(words):
-        ws = random.randint(50, 100)
-        phonemes = []
-        for j, ch in enumerate(word[:3]):  # simulate up to 3 phonemes per word
-            ps = random.randint(40, 100)
-            is_err = ps < 60
-            phonemes.append(PhonemeScoreOut(
-                word=word,
-                word_score=ws,
-                phoneme=f"/{ch}/",
-                phoneme_score=ps,
-                is_error=is_err,
-                suggested_phoneme=f"/{ch}/" if is_err else None,
-            ))
+    word_map: dict[str, list] = {}
+    for ph in ise_result.phonemes:
+        word_map.setdefault(ph.word, []).append(ph)
+    for word in words:
+        plist = word_map.get(word, [])
+        if plist:
+            ph_list = [
+                PhonemeScoreOut(
+                    word=word,
+                    word_score=p.word_score,
+                    phoneme=p.phoneme,
+                    phoneme_score=p.phoneme_score,
+                    is_error=p.is_error,
+                    suggested_phoneme=p.suggested_phoneme,
+                )
+                for p in plist
+            ]
+            ws = sum(p.phoneme_score for p in plist) // len(plist)
+        else:
+            continue
         word_scores.append(WordScoreOut(
             word=word,
             score=ws,
-            phonemes=phonemes if detail_level == "full" else None,
+            phonemes=ph_list if detail_level == "full" else None,
         ))
-
     return PronunciationEvaluateResponse(
-        overall_score=overall,
-        pronunciation_score=random.randint(50, 100),
-        fluency_score=random.randint(50, 100),
-        completeness_score=100,
+        overall_score=ise_result.overall_score,
+        pronunciation_score=ise_result.pronunciation_score,
+        fluency_score=ise_result.fluency_score,
+        completeness_score=ise_result.completeness_score,
         words=word_scores if detail_level == "full" else None,
         prosody=ProsodyOut(
-            intonation_score=random.randint(50, 100),
-            rhythm_score=random.randint(50, 100),
+            intonation_score=ise_result.prosody_score,
+            rhythm_score=ise_result.prosody_score,
             stress_errors=[],
         ),
-        advice="重点练习元音发音，注意单词的重音位置。",
+        advice=ise_result.advice,
+        reference_audio_url=f"https://dict.youdao.com/dictvoice?audio={words[0]}&type=0" if words else None,
     )
 
 

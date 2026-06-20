@@ -13,6 +13,15 @@
         @click="showSceneInfo = !showSceneInfo"
         title="场景信息"
       >📋</button>
+      <button
+        class="btn-coaching"
+        :class="{ active: chatStore.coachingEnabled }"
+        :disabled="!chatStore.connectionStatus.connected"
+        @click="toggleCoaching"
+        title="开启后从下一句起显示发音评分与纠音建议"
+      >
+        纠音
+      </button>
       <button v-if="chatStore.connectionStatus.connected" class="btn-end" @click="endSession">
         结束对话
       </button>
@@ -23,6 +32,9 @@
       <!-- Scene info panel -->
       <div v-if="showSceneInfo && sceneDetail" class="scene-panel">
         <h3>{{ sceneDetail.name }}</h3>
+        <div v-if="sceneDetail.description" class="panel-desc">
+          {{ sceneDetail.description }}
+        </div>
         <div class="panel-section">
           <h4>核心词汇</h4>
           <div class="panel-vocab">
@@ -151,9 +163,40 @@
             </div>
           </div>
 
-          <!-- Pronunciation score -->
-          <div v-if="msg.role === 'user' && msg.pronunciation_score != null" class="pron-score">
-            发音评分：{{ msg.pronunciation_score }}/100
+          <!-- Pronunciation pending -->
+          <div
+            v-if="msg.role === 'user' && msg.pronunciationPending && msg.pronunciation_score == null"
+            class="pron-feedback pron-pending"
+          >
+            <span class="pron-score">正在评测发音...</span>
+          </div>
+
+          <!-- Pronunciation feedback (coaching mode) -->
+          <div
+            v-if="msg.role === 'user' && msg.pronunciation_score != null"
+            class="pron-feedback"
+          >
+            <div class="pron-score-row">
+              <span class="pron-score">发音评分：{{ msg.pronunciation_score }}/100</span>
+              <span v-if="msg.pronunciation_source === 'text_analysis'" class="pron-estimated">文本估算</span>
+              <router-link
+                v-if="msg.utteranceId && chatStore.currentSessionId"
+                :to="{
+                  path: `/sessions/${chatStore.currentSessionId}/pronunciation/${msg.utteranceId}`,
+                  query: { from: 'chat' },
+                }"
+                class="pron-detail-link"
+              >查看纠音详情</router-link>
+            </div>
+            <p v-if="msg.pronunciation_tip" class="pron-tip">{{ msg.pronunciation_tip }}</p>
+            <div v-if="lowScoreWords(msg).length" class="pron-words">
+              <span class="pron-words-label">注意发音：</span>
+              <span
+                v-for="w in lowScoreWords(msg)"
+                :key="w.word"
+                class="pron-word-tag"
+              >{{ w.word }}</span>
+            </div>
           </div>
 
           <div v-if="msg.isTemporary" class="typing-indicator">
@@ -164,6 +207,8 @@
     </div>
 
     </div><!-- end chat-body -->
+
+    <div v-if="coachingToast" class="coaching-toast">{{ coachingToast }}</div>
 
     <!-- Dictionary modal -->
     <div v-if="dictWord" class="modal-overlay" @click.self="dictWord = null">
@@ -251,7 +296,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { useChatStore } from '@/stores/chat';
+import { useChatStore, type ChatMessage } from '@/stores/chat';
+import { syncApiConfigFromCache } from '@/api/settings';
 import { useAuthStore } from '@/stores/auth';
 import { useSceneStore } from '@/stores/scene';
 
@@ -268,6 +314,35 @@ const auth = useAuthStore();
 const sceneStore = useSceneStore();
 
 const inputText = ref('');
+const coachingToast = ref('');
+let coachingToastTimer: ReturnType<typeof setTimeout> | null = null;
+
+function showCoachingToast(message: string) {
+  coachingToast.value = message;
+  if (coachingToastTimer) clearTimeout(coachingToastTimer);
+  coachingToastTimer = setTimeout(() => { coachingToast.value = ''; }, 2800);
+}
+
+watch(
+  () => chatStore.pronunciationSkipHint,
+  (msg) => {
+    if (msg) showCoachingToast(msg);
+  },
+);
+
+function toggleCoaching() {
+  if (!chatStore.connectionStatus.connected) return;
+  const next = !chatStore.coachingEnabled;
+  chatStore.setCoachingEnabled(next);
+  if (next) {
+    showCoachingToast('从下一句开始纠音');
+  }
+}
+
+function lowScoreWords(msg: ChatMessage) {
+  return (msg.pronunciation_words || []).filter((w) => w.score < 70).slice(0, 3);
+}
+
 const messagesContainer = ref<HTMLElement | null>(null);
 const showSceneInfo = ref(false);
 const sceneDetail = ref<any>(null);
@@ -312,7 +387,7 @@ import apiClient from '@/api/client';
 
 // Speed control
 const speeds = [0.75, 0.9, 1.0, 1.25, 1.5];
-const speedIdx = ref(1); // default 0.9x (learner-friendly)
+const speedIdx = ref(2); // default 1.0x
 const speedLabel = computed(() => speeds[speedIdx.value] + 'x');
 function cycleSpeed() {
   speedIdx.value = (speedIdx.value + 1) % speeds.length;
@@ -356,18 +431,16 @@ async function lookupWord(word: string) {
 
 function speakDictWord() {
   if (!dictWord.value) return;
-  chatStore.stopSpeaking();
   chatStore.speakText(dictWord.value);
 }
 
 function replayAiAudio(msg: any) {
-  // Play stored Edge-TTS audio if available, fallback to SpeechSynthesis
-  chatStore.stopSpeaking();
-  if (msg.audioUrl || msg.audioBlob) {
-    chatStore.playMessageAudio(msg);
-  } else {
+  if (msg.role === 'assistant') {
+    chatStore.stopLocalPlayback();
     chatStore.speakText(msg.content);
+    return;
   }
+  chatStore.playMessageAudio(msg);
 }
 
 async function toggleTranslate(msgId: string, text: string) {
@@ -459,7 +532,12 @@ async function startRecording() {
     audioRecorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm' });
     audioChunks = [];
     audioRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) audioChunks.push(e.data);
+      if (e.data.size > 0) {
+        audioChunks.push(e.data);
+        if (chatStore.connectionStatus.connected) {
+          chatStore.sendAudioChunk(e.data, false);
+        }
+      }
     };
     audioRecorder.start(250);
   } catch (err) {
@@ -499,14 +577,14 @@ async function startRecording() {
         // Only send text when user manually stopped (isRecording already set to false).
         if (!isRecording.value) {
           const fullText = continuousTranscripts.join(' ').trim();
-          if (fullText) {
+          if (fullText || audioChunks.length > 0) {
             stopAudioRecorder();
             const audioBlob = audioChunks.length > 0
               ? new Blob(audioChunks, { type: 'audio/webm' })
               : null;
             if (audioBlob) {
-              chatStore.sendMessageWithAudio(fullText, audioBlob);
-            } else {
+              chatStore.finalizeAudioRecording(audioBlob, fullText || undefined);
+            } else if (fullText) {
               chatStore.sendMessage(fullText);
             }
           }
@@ -567,7 +645,7 @@ function stopRecording() {
     audioRecorder.onstop = () => {
       if (audioChunks.length > 0) {
         const blob = new Blob(audioChunks, { type: 'audio/webm' });
-        chatStore.sendAudio(blob);
+        chatStore.finalizeAudioRecording(blob);
       }
       resetRecordingState();
     };
@@ -585,13 +663,16 @@ async function endSession() {
   router.push(`/summary/${sessionId}`);
 }
 
-onMounted(() => {
+onMounted(async () => {
   if (!auth.isAuthenticated || !auth.token) {
     router.push('/');
     return;
   }
+  await syncApiConfigFromCache().catch(() => {});
   const sessionId = route.params.sessionId as string;
-  chatStore.connect(sessionId, auth.token, { sceneId: chatStore.sceneId ?? undefined });
+  chatStore.connect(sessionId, auth.token, {
+    sceneId: chatStore.sceneId ?? undefined,
+  });
   // Load scene detail for the info panel
   const customData = sessionStorage.getItem('activeCustomScene');
   if (customData) {
@@ -599,6 +680,7 @@ onMounted(() => {
       const data = JSON.parse(customData);
       sceneDetail.value = {
         name: data.topic || '自定义场景',
+        description: data.description || '',
         role_prompt: data.role_prompt || '',
         opening_line: data.opening_line || '',
         vocab_list: data.vocab_list || [],
@@ -701,9 +783,19 @@ onUnmounted(() => {
 .scene-panel h3 {
   font-size: 1rem;
   color: var(--accent-primary);
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--bg-card);
+}
+.panel-desc {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  padding: 6px 10px;
+  background: rgba(56,189,248,0.06);
+  border-radius: 6px;
+  border-left: 2px solid var(--accent-primary);
+  line-height: 1.4;
 }
 .panel-section { margin-bottom: 14px; }
 .panel-section h4 {
@@ -825,6 +917,38 @@ onUnmounted(() => {
 }
 .btn-end:hover { opacity: 0.85; }
 
+.btn-coaching {
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+.btn-coaching.active {
+  background: rgba(56, 189, 248, 0.15);
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+.btn-coaching:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.coaching-toast {
+  position: fixed;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(15, 23, 42, 0.92);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  z-index: 100;
+  pointer-events: none;
+}
+
 /* Messages */
 .messages-area {
   flex: 1;
@@ -860,7 +984,7 @@ onUnmounted(() => {
   position: relative;
 }
 .message-row.user .bubble {
-  background: var(--accent-primary);
+  background: #fff;
   color: #0f172a;
   border-bottom-right-radius: 4px;
 }
@@ -1038,11 +1162,61 @@ onUnmounted(() => {
   font-style: italic;
 }
 
-.pron-score {
+.pron-feedback {
   margin-top: 8px;
-  font-size: 0.8rem;
+  padding: 10px 12px;
+  background: rgba(56, 189, 248, 0.08);
+  border-radius: 8px;
+  border-left: 2px solid var(--accent-primary);
+  font-size: 0.82rem;
+}
+.pron-score-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.pron-score {
   font-weight: 600;
   color: var(--accent-success);
+}
+.pron-estimated {
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+}
+.pron-detail-link {
+  font-size: 0.78rem;
+  color: var(--accent-primary);
+  text-decoration: none;
+}
+.pron-detail-link:hover { text-decoration: underline; }
+.pron-tip {
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin: 4px 0 0;
+}
+.pron-words {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.pron-words-label {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+.pron-word-tag {
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(248, 113, 113, 0.12);
+  color: #f87171;
+  font-size: 0.75rem;
+  font-weight: 600;
 }
 
 /* Typing indicator */

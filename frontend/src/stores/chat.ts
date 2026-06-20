@@ -16,8 +16,14 @@ export interface ChatMessage {
     type: 'grammar' | 'pronunciation' | 'vocabulary';
   }>;
   pronunciation_score?: number;
+  pronunciation_tip?: string;
+  pronunciation_source?: 'iflytek_ise' | 'text_analysis';
+  pronunciation_words?: Array<{ word: string; score: number; error_phonemes?: string[] }>;
+  pronunciationPending?: boolean;
+  utteranceId?: string;
   audioBlob?: Blob;
   audioUrl?: string;
+  audioSegments?: Blob[];
 }
 
 export interface ConnectionStatus {
@@ -39,12 +45,74 @@ export const useChatStore = defineStore('chat', () => {
   const ttsEnabled = ref(true);
   const currentSessionId = ref<string | null>(null);
   const sceneId = ref<number | null>(null);
+  const coachingEnabled = ref(false);
+  const pronunciationSkipHint = ref<string | null>(null);
+
+  const COACHING_PREF_KEY = 'coachingTogglePref';
+
+  function findUserMessageForUtterance(
+    utteranceId?: string,
+    sentenceText?: string,
+  ): ChatMessage | undefined {
+    if (utteranceId) {
+      const byId = messages.value.find(
+        (m) => m.role === 'user' && (m.utteranceId === utteranceId || m.id === utteranceId),
+      );
+      if (byId) return byId;
+    }
+    const normalized = (sentenceText || '').trim();
+    if (normalized) {
+      const byText = [...messages.value].reverse().find(
+        (m) => m.role === 'user' && m.content.trim() === normalized,
+      );
+      if (byText) return byText;
+    }
+    return [...messages.value].reverse().find(
+      (m) => m.role === 'user' && !m.pronunciation_score,
+    );
+  }
+
+  function attachPronunciationFeedback(payload: Record<string, unknown>) {
+    const utteranceId = payload.utterance_id as string | undefined;
+    const sentenceText = payload.sentence_text as string | undefined;
+    const target = findUserMessageForUtterance(utteranceId, sentenceText);
+    if (!target) {
+      console.warn('pronunciation_feedback: no matching user message', payload);
+      return;
+    }
+    target.pronunciationPending = false;
+    target.pronunciation_score = payload.overall_score as number;
+    target.pronunciation_tip = payload.brief_tip as string | undefined;
+    target.pronunciation_source = payload.source as ChatMessage['pronunciation_source'];
+    if (utteranceId) target.utteranceId = utteranceId;
+    if (Array.isArray(payload.word_scores)) {
+      target.pronunciation_words = payload.word_scores as ChatMessage['pronunciation_words'];
+    }
+  }
+
+  /** AI 朗读使用浏览器 SpeechSynthesis，不播放服务端 TTS 音频。 */
+  const useBrowserTts = true;
 
   let ws: WebSocket | null = null;
+  let connectTimeout: ReturnType<typeof setTimeout> | null = null;
   let messageIdCounter = 0;
   let currentInterruptId: string | null = null;
   let currentAudio: HTMLAudioElement | null = null;
-  let playbackSpeed = 0.9;
+  let playbackSpeed = 1.0;
+
+  // Fallback queue when Web Audio decode fails
+  let ttsFallbackQueue: Blob[] = [];
+  let ttsPlaying = false;
+  let activeTtsInterruptId: string | null = null;
+  let streamingInterruptId: string | null = null;
+  let streamAiMsgId: string | null = null;
+  let webAudioContext: AudioContext | null = null;
+  let ttsScheduleTime = 0;
+  let ttsActiveSources = 0;
+  let ttsDecodeChain: Promise<void> = Promise.resolve();
+  let ttsPlaybackGeneration = 0;
+  /** Message ID that may still receive server TTS (avoid SpeechSynthesis double-play on replay). */
+  let ttsExpectedMsgId: string | null = null;
 
   function setPlaybackSpeed(speed: number) {
     playbackSpeed = speed;
@@ -53,49 +121,111 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // --- TTS (Speech Synthesis) ---
-  function _getTtsVoiceName(): string {
-    const v = localStorage.getItem('ttsVoice') || 'en-US-female';
-    const map: Record<string, string> = {
-      'en-US-female': 'en-US-JennyNeural',
-      'en-US-male': 'en-US-GuyNeural',
-      'en-GB-female': 'en-GB-SoniaNeural',
-      'en-GB-male': 'en-GB-RyanNeural',
-    };
-    return map[v] || 'en-US-JennyNeural';
+  async function ensureWebAudioContext(): Promise<AudioContext | null> {
+    if (!webAudioContext || webAudioContext.state === 'closed') {
+      webAudioContext = new AudioContext();
+      ttsScheduleTime = 0;
+    }
+    if (webAudioContext.state === 'suspended') {
+      await webAudioContext.resume();
+    }
+    return webAudioContext;
   }
 
+  function onTtsSourceEnded() {
+    ttsActiveSources = Math.max(0, ttsActiveSources - 1);
+    if (ttsActiveSources === 0) {
+      ttsPlaying = false;
+      isAiSpeaking.value = false;
+      isPaused.value = false;
+      clearTtsExpectedIfIdle();
+    }
+  }
+
+  // --- TTS (Speech Synthesis) ---
   function _getTtsVoiceKey(): string {
     return localStorage.getItem('ttsVoice') || 'en-US-female';
+  }
+
+  function _pickBrowserVoice(voiceKey: string): SpeechSynthesisVoice | undefined {
+    if (!window.speechSynthesis) return undefined;
+    const voices = window.speechSynthesis.getVoices();
+    if (!voices.length) return undefined;
+
+    const isGB = voiceKey.startsWith('en-GB');
+    const wantFemale = voiceKey.includes('female');
+    const langPrefix = isGB ? 'en-gb' : 'en-us';
+    const pool = voices.filter((v) =>
+      v.lang.replace('_', '-').toLowerCase().startsWith(langPrefix),
+    );
+    const searchIn = pool.length
+      ? pool
+      : voices.filter((v) => v.lang.toLowerCase().startsWith('en'));
+    const femaleHints = ['female', 'jenny', 'sonia', 'zira', 'samantha', 'victoria', 'aria'];
+    const maleHints = ['male', 'guy', 'ryan', 'david', 'mark', 'alex', 'guy'];
+    const hints = wantFemale ? femaleHints : maleHints;
+    return (
+      searchIn.find((v) => hints.some((h) => v.name.toLowerCase().includes(h)))
+      ?? searchIn[0]
+    );
   }
 
   function speakText(text: string) {
     if (!ttsEnabled.value) return;
     if (!window.speechSynthesis) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
 
-    // Stop any ongoing speech (interrupt)
-    window.speechSynthesis.cancel();
+    stopLocalPlayback();
 
-    const voiceName = _getTtsVoiceName();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = voiceName.startsWith('en-GB') ? 'en-GB' : 'en-US';
-    utterance.rate = 0.9;
+    const voiceKey = _getTtsVoiceKey();
+    const utterance = new SpeechSynthesisUtterance(trimmed);
+    utterance.lang = voiceKey.startsWith('en-GB') ? 'en-GB' : 'en-US';
     utterance.rate = playbackSpeed;
     utterance.pitch = 1.0;
 
-    // Match browser voice to selected Edge-TTS voice
-    const voices = window.speechSynthesis.getVoices();
-    const preferredVoice = voices.find(v => v.name === voiceName || v.name.includes(voiceName.split('-')[2] || ''));
+    const preferredVoice = _pickBrowserVoice(voiceKey);
     if (preferredVoice) utterance.voice = preferredVoice;
 
     utterance.onstart = () => { isAiSpeaking.value = true; };
-    utterance.onend = () => { isAiSpeaking.value = false; };
-    utterance.onerror = () => { isAiSpeaking.value = false; };
+    utterance.onend = () => {
+      isAiSpeaking.value = false;
+      clearTtsExpectedIfIdle();
+    };
+    utterance.onerror = () => {
+      isAiSpeaking.value = false;
+      clearTtsExpectedIfIdle();
+    };
 
-    window.speechSynthesis.speak(utterance);
+    // Chrome can emit duplicate output if speak() runs in the same turn as cancel().
+    window.setTimeout(() => window.speechSynthesis.speak(utterance), 0);
+  }
+
+  function speakAiResponse(text: string) {
+    if (!useBrowserTts) return;
+    speakText(text);
+  }
+
+  function isTtsExpectedForMessage(msgId: string): boolean {
+    return ttsExpectedMsgId === msgId;
+  }
+
+  function clearTtsExpectedIfIdle() {
+    if (
+      ttsActiveSources === 0
+      && !ttsPlaying
+      && !currentAudio
+      && ttsFallbackQueue.length === 0
+    ) {
+      ttsExpectedMsgId = null;
+    }
   }
 
   function pauseAudio() {
+    if (webAudioContext && webAudioContext.state === 'running') {
+      webAudioContext.suspend().catch(() => {});
+      isPaused.value = true;
+    }
     if (currentAudio && !currentAudio.paused) {
       currentAudio.pause();
       isPaused.value = true;
@@ -107,6 +237,10 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function resumeAudio() {
+    if (webAudioContext && webAudioContext.state === 'suspended') {
+      webAudioContext.resume().catch(() => {});
+      isPaused.value = false;
+    }
     if (currentAudio && currentAudio.paused) {
       currentAudio.play().catch(() => {});
       isPaused.value = false;
@@ -125,11 +259,245 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function stopSpeaking() {
+  function findAiMessageForTts(interruptId?: string | null): ChatMessage | undefined {
+    if (interruptId) {
+      const byId = messages.value.find((m) => m.id === interruptId);
+      if (byId) return byId;
+    }
+    if (streamAiMsgId) {
+      return messages.value.find((m) => m.id === streamAiMsgId);
+    }
+    return [...messages.value].reverse().find((m) => m.role === 'assistant');
+  }
+
+  function appendTtsSegmentToMessage(msg: ChatMessage, blob: Blob) {
+    if (!msg.audioSegments) msg.audioSegments = [];
+    msg.audioSegments.push(blob);
+    if (msg.audioUrl) URL.revokeObjectURL(msg.audioUrl);
+    msg.audioBlob = blob;
+    msg.audioUrl = URL.createObjectURL(blob);
+  }
+
+  function base64ToBlob(base64: string, mime: string): Blob {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new Blob([bytes], { type: mime || 'audio/mp3' });
+  }
+
+  function stopAudioEngine() {
+    ttsPlaybackGeneration += 1;
+    if (webAudioContext) {
+      webAudioContext.close().catch(() => {});
+      webAudioContext = null;
+    }
+    ttsScheduleTime = 0;
+    ttsActiveSources = 0;
+    ttsFallbackQueue = [];
     if (currentAudio) {
       currentAudio.pause();
+      currentAudio.onended = null;
       currentAudio = null;
     }
+  }
+
+  /** Stop local playback only — does not send WS interrupt (for replay / dict). */
+  function stopLocalPlayback() {
+    clearTtsQueue();
+    stopAudioEngine();
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    isAiSpeaking.value = false;
+    isPaused.value = false;
+  }
+
+  async function decodeTtsBlob(blob: Blob, generation: number): Promise<AudioBuffer | null> {
+    if (generation !== ttsPlaybackGeneration) return null;
+    const ctx = await ensureWebAudioContext();
+    if (!ctx || generation !== ttsPlaybackGeneration) return null;
+    try {
+      return await ctx.decodeAudioData(await blob.arrayBuffer());
+    } catch {
+      return null;
+    }
+  }
+
+  function scheduleDecodedBuffer(audioBuffer: AudioBuffer, generation: number) {
+    if (generation !== ttsPlaybackGeneration || !webAudioContext || webAudioContext.state === 'closed') {
+      return;
+    }
+    const ctx = webAudioContext;
+    const source = ctx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.playbackRate.value = playbackSpeed;
+    source.connect(ctx.destination);
+
+    const now = ctx.currentTime;
+    if (ttsScheduleTime < now) {
+      ttsScheduleTime = now;
+    }
+    const startAt = ttsScheduleTime;
+    const duration = audioBuffer.duration / playbackSpeed;
+    ttsScheduleTime = startAt + duration;
+
+    ttsActiveSources += 1;
+    ttsPlaying = true;
+    isAiSpeaking.value = true;
+    isPaused.value = false;
+
+    source.onended = () => onTtsSourceEnded();
+    source.start(startAt);
+  }
+
+  function scheduleTtsBlob(blob: Blob) {
+    const generation = ttsPlaybackGeneration;
+    const decodePromise = decodeTtsBlob(blob, generation);
+
+    ttsDecodeChain = ttsDecodeChain.then(async () => {
+      if (generation !== ttsPlaybackGeneration || !ttsEnabled.value) return;
+
+      const audioBuffer = await decodePromise;
+      if (!audioBuffer || generation !== ttsPlaybackGeneration) {
+        if (generation === ttsPlaybackGeneration) {
+          ttsFallbackQueue.push(blob);
+          playNextTtsSegmentFallback(generation);
+        }
+        return;
+      }
+      if (!webAudioContext || webAudioContext.state === 'closed') {
+        await ensureWebAudioContext();
+      }
+      scheduleDecodedBuffer(audioBuffer, generation);
+    });
+  }
+
+  function scheduleTtsBlobBatch(blobs: Blob[]) {
+    if (!blobs.length) return;
+    const generation = ttsPlaybackGeneration;
+    const decodePromises = blobs.map((blob) => decodeTtsBlob(blob, generation));
+
+    ttsDecodeChain = ttsDecodeChain.then(async () => {
+      if (generation !== ttsPlaybackGeneration || !ttsEnabled.value) return;
+
+      const buffers = await Promise.all(decodePromises);
+      if (!webAudioContext || webAudioContext.state === 'closed') {
+        await ensureWebAudioContext();
+      }
+
+      let queuedFallback = false;
+      for (let i = 0; i < blobs.length; i++) {
+        if (generation !== ttsPlaybackGeneration) return;
+        const audioBuffer = buffers[i];
+        if (audioBuffer) {
+          scheduleDecodedBuffer(audioBuffer, generation);
+        } else {
+          ttsFallbackQueue.push(blobs[i]);
+          queuedFallback = true;
+        }
+      }
+      if (queuedFallback) {
+        playNextTtsSegmentFallback(generation);
+      }
+    });
+  }
+
+  function playTtsBlobFallback(blob: Blob, generation = ttsPlaybackGeneration) {
+    if (generation !== ttsPlaybackGeneration) return;
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio.onended = null;
+      currentAudio = null;
+    }
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.playbackRate = playbackSpeed;
+    currentAudio = audio;
+    ttsPlaying = true;
+    isAiSpeaking.value = true;
+    isPaused.value = false;
+    audio.onended = () => {
+      if (generation !== ttsPlaybackGeneration) {
+        URL.revokeObjectURL(url);
+        return;
+      }
+      URL.revokeObjectURL(url);
+      currentAudio = null;
+      ttsPlaying = false;
+      playNextTtsSegmentFallback(generation);
+      clearTtsExpectedIfIdle();
+    };
+    audio.onerror = () => {
+      URL.revokeObjectURL(url);
+      currentAudio = null;
+      ttsPlaying = false;
+      playNextTtsSegmentFallback(generation);
+    };
+    audio.play().catch(() => {
+      URL.revokeObjectURL(url);
+      currentAudio = null;
+      ttsPlaying = false;
+      playNextTtsSegmentFallback(generation);
+    });
+  }
+
+  function playNextTtsSegmentFallback(generation = ttsPlaybackGeneration) {
+    if (generation !== ttsPlaybackGeneration) return;
+    if (ttsFallbackQueue.length === 0 || !ttsEnabled.value || currentAudio) {
+      if (ttsActiveSources === 0 && !currentAudio) {
+        ttsPlaying = false;
+        isAiSpeaking.value = false;
+        isPaused.value = false;
+      }
+      return;
+    }
+    const blob = ttsFallbackQueue.shift()!;
+    playTtsBlobFallback(blob, generation);
+  }
+
+  function enqueueTtsChunk(
+    base64: string,
+    mime: string,
+    interruptId?: string | null,
+  ) {
+    if (!ttsEnabled.value || useBrowserTts) return;
+    const blob = base64ToBlob(base64, mime);
+    const targetMsg = findAiMessageForTts(interruptId ?? activeTtsInterruptId);
+    if (targetMsg) {
+      appendTtsSegmentToMessage(targetMsg, blob);
+    }
+    if (interruptId) {
+      activeTtsInterruptId = interruptId;
+      if (streamAiMsgId === interruptId) {
+        streamAiMsgId = null;
+      }
+    }
+    scheduleTtsBlob(blob);
+  }
+
+  function clearTtsQueue() {
+    ttsFallbackQueue = [];
+    ttsPlaying = false;
+    activeTtsInterruptId = null;
+  }
+
+  function sendInterrupt() {
+    if (ws && ws.readyState === WebSocket.OPEN && streamingInterruptId) {
+      ws.send(JSON.stringify({
+        type: 'interrupt',
+        payload: {
+          interrupt_id: streamingInterruptId,
+          session_id: currentSessionId.value,
+        },
+      }));
+    }
+    clearTtsQueue();
+    stopAudioEngine();
+  }
+
+  function stopSpeaking() {
+    sendInterrupt();
+    stopAudioEngine();
     if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
@@ -144,22 +512,65 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function connect(sessionId: string, token: string, options?: { sceneId?: number }) {
+  function clearConnectTimeout() {
+    if (connectTimeout) {
+      clearTimeout(connectTimeout);
+      connectTimeout = null;
+    }
+  }
+
+  function failConnection(message: string) {
+    clearConnectTimeout();
+    connectionStatus.value = {
+      connected: false,
+      connecting: false,
+      error: message,
+    };
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+      ws.close();
+    }
+    ws = null;
+  }
+
+  function buildWsUrl(token: string): string {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.host}/api/v1/ws?token=${encodeURIComponent(token)}`;
+  }
+
+  function connect(
+    sessionId: string,
+    token: string,
+    options?: { sceneId?: number },
+  ) {
     if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) {
       return;
     }
 
     currentSessionId.value = sessionId;
     sceneId.value = options?.sceneId ?? null;
+    const savedPref = localStorage.getItem(COACHING_PREF_KEY);
+    coachingEnabled.value = savedPref === 'true';
     connectionStatus.value = { connected: false, connecting: true, error: null };
+    clearTtsQueue();
+    streamAiMsgId = null;
+    streamingInterruptId = null;
+    ttsExpectedMsgId = null;
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${protocol}//localhost:8000/api/v1/ws?token=${token}`;
+    const url = buildWsUrl(token);
+
+    clearConnectTimeout();
+    connectTimeout = setTimeout(() => {
+      if (connectionStatus.value.connecting) {
+        failConnection('连接超时，请确认后端已启动（端口 8000）并刷新页面');
+      }
+    }, 15000);
 
     ws = new WebSocket(url);
 
     ws.onopen = () => {
-      // Send start_session handshake per protocol
+      if (window.speechSynthesis) {
+        window.speechSynthesis.getVoices();
+      }
       ws!.send(JSON.stringify({
         type: 'start_session',
         payload: {
@@ -168,10 +579,15 @@ export const useChatStore = defineStore('chat', () => {
           config: {
             audio_format: 'pcm_s16le',
             tts_voice: _getTtsVoiceKey(),
+            browser_tts: useBrowserTts,
+            coaching_enabled: coachingEnabled.value,
           },
           custom_scene: JSON.parse(sessionStorage.getItem('activeCustomScene') || 'null'),
         },
       }));
+      if (coachingEnabled.value) {
+        sendSetCoaching(true);
+      }
     };
 
     ws.onmessage = (event) => {
@@ -185,77 +601,164 @@ export const useChatStore = defineStore('chat', () => {
         const payload = data.payload || {};
 
         switch (data.type) {
-          case 'tts_audio': {
-            // Single TTS trigger: Edge-TTS audio if available, SpeechSynthesis fallback
-            const payload = data.payload || {};
-            if (!ttsEnabled.value) break;
-            if (payload.audio_base64) {
-              // Play real Edge-TTS MP3 audio
-              const binary = atob(payload.audio_base64);
-              const bytes = new Uint8Array(binary.length);
-              for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-              const blob = new Blob([bytes], { type: payload.audio_mime || 'audio/mp3' });
-              const url = URL.createObjectURL(blob);
-              const audio = new Audio(url);
-              audio.playbackRate = playbackSpeed;
-              currentAudio = audio;
-              isPaused.value = false;
-              // Store audio URL on the last AI message for replay
-              const lastAiMsg = [...messages.value].reverse().find(m => m.role === 'assistant');
-              if (lastAiMsg) {
-                lastAiMsg.audioUrl = url;
-                lastAiMsg.audioBlob = blob;
+          case 'asr_partial': {
+            const partialText = payload.text;
+            if (partialText) {
+              const pending = [...messages.value].reverse().find(
+                (m) => m.role === 'user' && m.isTemporary && !m.utteranceId,
+              );
+              if (pending) {
+                pending.content = partialText;
+              } else {
+                messages.value.push({
+                  id: `user-${++messageIdCounter}`,
+                  role: 'user',
+                  content: partialText,
+                  timestamp: new Date().toISOString(),
+                  isTemporary: true,
+                });
               }
-              audio.play().catch(() => {});
-              audio.onended = () => {
-                URL.revokeObjectURL(url);
-                currentAudio = null;
-                isPaused.value = false;
-              };
-            } else if (payload.text) {
-              // Fallback: browser SpeechSynthesis
-              speakText(payload.text);
+            }
+            break;
+          }
+
+          case 'tts_audio': {
+            if (useBrowserTts) break;
+            const ttsPayload = data.payload || {};
+            if (!ttsEnabled.value) break;
+            const ttsInterruptId = ttsPayload.interrupt_id || null;
+            if (ttsPayload.audio_base64) {
+              enqueueTtsChunk(
+                ttsPayload.audio_base64,
+                ttsPayload.audio_mime || 'audio/mp3',
+                ttsInterruptId,
+              );
+            } else if (ttsPayload.text) {
+              const fallbackMsg = findAiMessageForTts(ttsInterruptId);
+              const hasAudio = (fallbackMsg?.audioSegments?.length ?? 0) > 0
+                || ttsPlaying
+                || ttsActiveSources > 0
+                || ttsFallbackQueue.length > 0;
+              if (!hasAudio) {
+                speakText(fallbackMsg?.content || ttsPayload.text);
+              }
+            }
+            if (ttsPayload.is_end && ttsInterruptId && ttsExpectedMsgId === ttsInterruptId) {
+              ttsExpectedMsgId = null;
             }
             break;
           }
 
           case 'session_ready': {
+            clearConnectTimeout();
             connectionStatus.value = { connected: true, connecting: false, error: null };
             // Sync session ID from server (in case server reused or created a new one)
             if (payload.session_id) {
               currentSessionId.value = payload.session_id;
             }
+            if (payload.negotiated_config?.coaching_enabled != null) {
+              coachingEnabled.value = !!payload.negotiated_config.coaching_enabled;
+            }
             // Display AI's opening line
             const firstMsg = payload.ai_first_message;
             if (firstMsg?.text) {
+              const openingId = firstMsg.utterance_id || `ai-${++messageIdCounter}`;
+              activeTtsInterruptId = openingId;
+              ttsExpectedMsgId = openingId;
               messages.value.push({
-                id: firstMsg.utterance_id || `ai-${++messageIdCounter}`,
+                id: openingId,
                 role: 'assistant',
                 content: firstMsg.text,
                 timestamp: new Date().toISOString(),
                 isTemporary: false,
+                audioSegments: [],
               });
+              // Opening line is complete; do not reuse its id for the next LLM stream.
+              streamAiMsgId = null;
+              speakAiResponse(firstMsg.text);
             }
             break;
           }
 
           case 'asr_final': {
-            // Final ASR transcription; display as user message if not already shown
-            const asrText = payload.text;
-            if (asrText) {
-              const lastMsg = messages.value[messages.value.length - 1];
-              if (lastMsg?.role === 'user' && lastMsg.isTemporary) {
-                lastMsg.content = asrText;
-                lastMsg.isTemporary = false;
-              } else if (!lastMsg || lastMsg.role !== 'user' || lastMsg.content !== asrText) {
-                messages.value.push({
-                  id: `user-${++messageIdCounter}`,
-                  role: 'user',
-                  content: asrText,
-                  timestamp: new Date().toISOString(),
-                });
+            const asrText = (payload.text as string || '').trim();
+            const utteranceId = payload.utterance_id as string | undefined;
+            if (!asrText) break;
+
+            const pending = [...messages.value].reverse().find(
+              (m) => m.role === 'user'
+                && !m.utteranceId
+                && (m.isTemporary || m.content.trim() === asrText || m.content === '...'),
+            );
+            if (pending) {
+              pending.content = asrText;
+              pending.isTemporary = false;
+              if (utteranceId) pending.utteranceId = utteranceId;
+              if (coachingEnabled.value && pending.pronunciation_score == null) {
+                pending.pronunciationPending = true;
               }
+            } else if (!findUserMessageForUtterance(utteranceId, asrText)) {
+              messages.value.push({
+                id: utteranceId || `user-${++messageIdCounter}`,
+                role: 'user',
+                content: asrText,
+                timestamp: new Date().toISOString(),
+                utteranceId,
+              });
             }
+            break;
+          }
+
+          case 'llm_response_delta': {
+            const delta = payload.text || '';
+            streamingInterruptId = payload.interrupt_id || streamingInterruptId;
+            let aiMsg = streamAiMsgId
+              ? messages.value.find((m) => m.id === streamAiMsgId && m.isTemporary)
+              : undefined;
+            if (!aiMsg) {
+              clearTtsQueue();
+              stopAudioEngine();
+              const newId = payload.interrupt_id || `ai-${++messageIdCounter}`;
+              streamAiMsgId = newId;
+              activeTtsInterruptId = newId;
+              ttsExpectedMsgId = newId;
+              aiMsg = {
+                id: newId,
+                role: 'assistant',
+                content: '',
+                timestamp: new Date().toISOString(),
+                isTemporary: true,
+                audioSegments: [],
+              };
+              messages.value.push(aiMsg);
+            }
+            if (aiMsg) {
+              aiMsg.content += delta;
+            }
+            break;
+          }
+
+          case 'tts_audio_chunk': {
+            if (!ttsEnabled.value || useBrowserTts) break;
+            streamingInterruptId = payload.interrupt_id || streamingInterruptId;
+            if (payload.audio_base64) {
+              enqueueTtsChunk(
+                payload.audio_base64,
+                payload.audio_mime || 'audio/mp3',
+                payload.interrupt_id || streamingInterruptId,
+              );
+            }
+            break;
+          }
+
+          case 'tts_cancelled': {
+            clearTtsQueue();
+            stopAudioEngine();
+            if (window.speechSynthesis) {
+              window.speechSynthesis.cancel();
+            }
+            isAiSpeaking.value = false;
+            ttsExpectedMsgId = null;
             break;
           }
 
@@ -264,52 +767,70 @@ export const useChatStore = defineStore('chat', () => {
             currentInterruptId = payload.interrupt_id || null;
 
             const lastMsg = messages.value[messages.value.length - 1];
+            let spokenText = payload.text || '';
             if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isTemporary) {
-              lastMsg.content += payload.text || '';
-              if (payload.is_final) {
-                lastMsg.isTemporary = false;
-                lastMsg.id = payload.interrupt_id || lastMsg.id;
-              }
-            } else {
+              lastMsg.content = payload.text || lastMsg.content;
+              lastMsg.isTemporary = false;
+              lastMsg.id = payload.interrupt_id || lastMsg.id;
+              spokenText = lastMsg.content;
+            } else if (!streamAiMsgId || !messages.value.find((m) => m.id === streamAiMsgId)) {
               messages.value.push({
                 id: payload.interrupt_id || `ai-${++messageIdCounter}`,
                 role: 'assistant',
                 content: payload.text || '',
                 timestamp: new Date().toISOString(),
-                isTemporary: !payload.is_final,
+                isTemporary: false,
               });
+              spokenText = payload.text || '';
+            } else {
+              const streamed = messages.value.find((m) => m.id === streamAiMsgId);
+              if (streamed?.isTemporary) {
+                streamed.content = payload.text || streamed.content;
+                streamed.isTemporary = false;
+                spokenText = streamed.content;
+              } else {
+                messages.value.push({
+                  id: payload.interrupt_id || `ai-${++messageIdCounter}`,
+                  role: 'assistant',
+                  content: payload.text || '',
+                  timestamp: new Date().toISOString(),
+                  isTemporary: false,
+                });
+                spokenText = payload.text || '';
+              }
             }
-            if (!payload.is_final) {
-              isAiSpeaking.value = true;
-            }
+            streamAiMsgId = null;
+            ttsExpectedMsgId = null;
+            currentInterruptId = payload.interrupt_id || null;
+            speakAiResponse(spokenText);
+            break;
+          }
+
+          case 'coaching_state': {
+            coachingEnabled.value = !!payload.enabled;
             break;
           }
 
           case 'pronunciation_feedback': {
-            const payload = data.payload || {};
-            const lastUserMsg = [...messages.value].reverse().find((m) => m.role === 'user');
-            if (lastUserMsg) {
-              lastUserMsg.pronunciation_score = payload.overall_score;
+            pronunciationSkipHint.value = null;
+            attachPronunciationFeedback(data.payload || {});
+            break;
+          }
+
+          case 'pronunciation_skipped': {
+            const skipPayload = data.payload || {};
+            pronunciationSkipHint.value = skipPayload.message || '发音评测未完成';
+            for (const m of messages.value) {
+              if (m.role === 'user' && m.pronunciationPending) {
+                m.pronunciationPending = false;
+              }
             }
             break;
           }
 
-          case 'grammar_hint': {
-            const payload = data.payload || {};
-            const lastUserMsg = [...messages.value].reverse().find((m) => m.role === 'user');
-            if (lastUserMsg) {
-              if (!lastUserMsg.corrections) lastUserMsg.corrections = [];
-              lastUserMsg.corrections.push({
-                original: payload.original_text || '',
-                corrected: payload.correction || '',
-                explanation: payload.hint || '',
-                correctedSentence: payload.corrected_sentence || '',
-                severity: payload.severity || 'medium',
-                type: payload.hint_type === 'expression' ? 'vocabulary' : 'grammar',
-              });
-            }
+          case 'grammar_hint':
+            // Real-time grammar hints disabled; grammar available post-session only
             break;
-          }
 
           case 'session_ended': {
             connectionStatus.value.error = 'Session ended by server.';
@@ -319,11 +840,7 @@ export const useChatStore = defineStore('chat', () => {
 
           case 'error': {
             const payload = data.payload || {};
-            connectionStatus.value = {
-              connected: false,
-              connecting: false,
-              error: `[${payload.code}] ${payload.message}`,
-            };
+            failConnection(`[${payload.code}] ${payload.message}`);
             break;
           }
 
@@ -338,17 +855,50 @@ export const useChatStore = defineStore('chat', () => {
     };
 
     ws.onerror = () => {
-      connectionStatus.value = {
-        connected: false,
-        connecting: false,
-        error: 'WebSocket connection error',
-      };
+      if (connectionStatus.value.connecting) {
+        failConnection('WebSocket 连接失败，请确认后端服务已启动');
+      } else {
+        connectionStatus.value = {
+          connected: false,
+          connecting: false,
+          error: 'WebSocket connection error',
+        };
+      }
     };
 
     ws.onclose = () => {
-      connectionStatus.value = { connected: false, connecting: false, error: null };
+      clearConnectTimeout();
+      if (connectionStatus.value.connecting) {
+        connectionStatus.value = {
+          connected: false,
+          connecting: false,
+          error: '连接已断开，请刷新页面重试',
+        };
+      } else if (!connectionStatus.value.error) {
+        connectionStatus.value = { connected: false, connecting: false, error: null };
+      } else {
+        connectionStatus.value.connecting = false;
+        connectionStatus.value.connected = false;
+      }
       ws = null;
     };
+  }
+
+  function sendSetCoaching(enabled: boolean) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+      type: 'set_coaching',
+      payload: {
+        session_id: currentSessionId.value,
+        enabled,
+      },
+    }));
+  }
+
+  function setCoachingEnabled(enabled: boolean) {
+    coachingEnabled.value = enabled;
+    localStorage.setItem(COACHING_PREF_KEY, enabled ? 'true' : 'false');
+    sendSetCoaching(enabled);
   }
 
   function sendEndSession() {
@@ -365,6 +915,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function disconnect() {
+    clearConnectTimeout();
     ws?.close();
     ws = null;
     connectionStatus.value = { connected: false, connecting: false, error: null };
@@ -385,6 +936,7 @@ export const useChatStore = defineStore('chat', () => {
       role: 'user',
       content: text,
       timestamp: new Date().toISOString(),
+      pronunciationPending: coachingEnabled.value,
     };
     messages.value.push(userMsg);
 
@@ -393,12 +945,56 @@ export const useChatStore = defineStore('chat', () => {
       payload: {
         session_id: currentSessionId.value,
         text,
+        coaching_enabled: coachingEnabled.value,
       },
     }));
 
     nextTick(() => {
       // Scroll handled by view component
     });
+  }
+
+  function sendAudioChunk(audioBlob: Blob, isEnd: boolean, text?: string) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(',')[1];
+      ws!.send(JSON.stringify({
+        type: 'audio_chunk',
+        payload: {
+          session_id: currentSessionId.value,
+          audio_base64: base64,
+          audio_mime: audioBlob.type || 'audio/webm',
+          is_end: isEnd,
+          text: text || undefined,
+          coaching_enabled: coachingEnabled.value,
+        },
+      }));
+    };
+    reader.readAsDataURL(audioBlob);
+  }
+
+  function finalizeAudioRecording(audioBlob: Blob, text?: string) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      connectionStatus.value.error = 'Not connected to chat server';
+      return;
+    }
+
+    stopSpeaking();
+
+    const userMsg: ChatMessage = {
+      id: `user-${++messageIdCounter}`,
+      role: 'user',
+      content: text?.trim() || '...',
+      timestamp: new Date().toISOString(),
+      isTemporary: true,
+      pronunciationPending: coachingEnabled.value,
+      audioBlob,
+      audioUrl: URL.createObjectURL(audioBlob),
+    };
+    messages.value.push(userMsg);
+
+    sendAudioChunk(audioBlob, true, text?.trim());
   }
 
   function sendAudio(audioBlob: Blob) {
@@ -422,6 +1018,7 @@ export const useChatStore = defineStore('chat', () => {
           audio_base64: base64,
           audio_mime: audioBlob.type || 'audio/webm',
           is_end: true,
+          coaching_enabled: coachingEnabled.value,
         },
       }));
     };
@@ -445,12 +1042,36 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function playMessageAudio(msg: ChatMessage) {
+    stopLocalPlayback();
+    const generation = ttsPlaybackGeneration;
+
+    if (msg.role === 'assistant' && msg.audioSegments?.length) {
+      activeTtsInterruptId = msg.id;
+      scheduleTtsBlobBatch(msg.audioSegments);
+      return;
+    }
     if (!msg.audioUrl && msg.audioBlob) {
       msg.audioUrl = URL.createObjectURL(msg.audioBlob);
     }
     if (msg.audioUrl) {
       const audio = new Audio(msg.audioUrl);
-      audio.play().catch(() => {});
+      audio.playbackRate = playbackSpeed;
+      currentAudio = audio;
+      ttsPlaying = true;
+      isAiSpeaking.value = true;
+      audio.onended = () => {
+        if (generation !== ttsPlaybackGeneration) return;
+        currentAudio = null;
+        ttsPlaying = false;
+        isAiSpeaking.value = false;
+        clearTtsExpectedIfIdle();
+      };
+      audio.play().catch(() => {
+        currentAudio = null;
+        ttsPlaying = false;
+        isAiSpeaking.value = false;
+        clearTtsExpectedIfIdle();
+      });
     }
   }
 
@@ -477,14 +1098,21 @@ export const useChatStore = defineStore('chat', () => {
     ttsEnabled,
     currentSessionId,
     sceneId,
+    coachingEnabled,
+    pronunciationSkipHint,
     connect,
     disconnect,
     sendMessage,
     sendAudio,
+    sendAudioChunk,
+    finalizeAudioRecording,
+    setCoachingEnabled,
     sendMessageWithAudio,
     playMessageAudio,
     speakText,
+    isTtsExpectedForMessage,
     stopSpeaking,
+    stopLocalPlayback,
     pauseAudio,
     resumeAudio,
     togglePause,

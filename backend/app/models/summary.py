@@ -34,6 +34,7 @@ class SessionSummary(Base):
     highlights: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     practice_suggestions: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     share_image_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    opening_insight: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.utcnow())
 
     session: Mapped["Session"] = relationship(back_populates="summary")

@@ -27,6 +27,7 @@ class Session(Base):
         UUID(as_uuid=True), ForeignKey("custom_scenes.id"), nullable=True
     )
     difficulty: Mapped[str] = mapped_column(String(20), nullable=False)
+    mode: Mapped[str] = mapped_column(String(20), default="practice")
     status: Mapped[str] = mapped_column(String(20), default="active")
     started_at: Mapped[datetime] = mapped_column(default=lambda: datetime.utcnow())
     ended_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)

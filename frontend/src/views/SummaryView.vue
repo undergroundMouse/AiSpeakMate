@@ -2,7 +2,7 @@
   <div class="summary-view">
     <header class="page-header">
       <router-link to="/" class="back-link">&larr; 场景列表</router-link>
-      <h1>对话总结</h1>
+      <h1>练习总结</h1>
     </header>
 
     <!-- Loading -->
@@ -13,121 +13,121 @@
 
     <!-- Summary content -->
     <div v-if="summary && !loading" class="content">
-      <!-- Radar scores -->
-      <div class="section">
-        <h2>综合评分</h2>
-        <div v-if="summary.radar" class="radar-scores">
-          <div class="radar-item">
-            <span class="radar-label">流利度</span>
-            <div class="radar-bar-wrap">
-              <div class="radar-bar" :style="{ width: summary.radar.fluency + '%' }"></div>
+      <CoachCard
+        v-if="summary.coach_card"
+        :card="summary.coach_card"
+        :next-options="summary.next_practice_options"
+        @start-practice="goToScene"
+      />
+
+      <!-- Collapsible detailed analysis -->
+      <button class="toggle-details" @click="showDetails = !showDetails">
+        {{ showDetails ? '收起详细分析' : '查看详细分析' }}
+        <span class="toggle-icon">{{ showDetails ? '▲' : '▼' }}</span>
+      </button>
+
+      <div v-show="showDetails" class="details-panel">
+        <!-- Radar scores -->
+        <div class="section">
+          <h2>综合评分</h2>
+          <div v-if="summary.radar_scores" class="radar-scores">
+            <div class="radar-item">
+              <span class="radar-label">流利度</span>
+              <div class="radar-bar-wrap">
+                <div class="radar-bar" :style="{ width: summary.radar_scores.fluency + '%' }"></div>
+              </div>
+              <span class="radar-value">{{ summary.radar_scores.fluency }}<span class="radar-unit">/100</span></span>
             </div>
-            <span class="radar-value">{{ summary.radar.fluency }}<span class="radar-unit">/100</span></span>
-          </div>
-          <div class="radar-item">
-            <span class="radar-label">词汇量</span>
-            <div class="radar-bar-wrap">
-              <div class="radar-bar" :style="{ width: summary.radar.vocabulary + '%' }"></div>
+            <div class="radar-item">
+              <span class="radar-label">词汇量</span>
+              <div class="radar-bar-wrap">
+                <div class="radar-bar" :style="{ width: summary.radar_scores.vocabulary + '%' }"></div>
+              </div>
+              <span class="radar-value">{{ summary.radar_scores.vocabulary }}<span class="radar-unit">/100</span></span>
             </div>
-            <span class="radar-value">{{ summary.radar.vocabulary }}<span class="radar-unit">/100</span></span>
-          </div>
-          <div class="radar-item">
-            <span class="radar-label">语法</span>
-            <div class="radar-bar-wrap">
-              <div class="radar-bar" :style="{ width: summary.radar.grammar + '%' }"></div>
+            <div class="radar-item">
+              <span class="radar-label">语法</span>
+              <div class="radar-bar-wrap">
+                <div class="radar-bar" :style="{ width: summary.radar_scores.grammar + '%' }"></div>
+              </div>
+              <span class="radar-value">{{ summary.radar_scores.grammar }}<span class="radar-unit">/100</span></span>
             </div>
-            <span class="radar-value">{{ summary.radar.grammar }}<span class="radar-unit">/100</span></span>
-          </div>
-          <div class="radar-item">
-            <span class="radar-label">发音</span>
-            <div class="radar-bar-wrap">
-              <div class="radar-bar" :style="{ width: summary.radar.pronunciation + '%' }"></div>
+            <div class="radar-item">
+              <span class="radar-label">发音</span>
+              <div class="radar-bar-wrap">
+                <div class="radar-bar" :style="{ width: summary.radar_scores.pronunciation + '%' }"></div>
+              </div>
+              <span class="radar-value">{{ summary.radar_scores.pronunciation }}<span class="radar-unit">/100</span></span>
             </div>
-            <span class="radar-value">{{ summary.radar.pronunciation }}<span class="radar-unit">/100</span></span>
-          </div>
-          <div class="radar-item">
-            <span class="radar-label">互动</span>
-            <div class="radar-bar-wrap">
-              <div class="radar-bar" :style="{ width: summary.radar.interaction + '%' }"></div>
+            <div class="radar-item">
+              <span class="radar-label">互动</span>
+              <div class="radar-bar-wrap">
+                <div class="radar-bar" :style="{ width: summary.radar_scores.interaction + '%' }"></div>
+              </div>
+              <span class="radar-value">{{ summary.radar_scores.interaction }}<span class="radar-unit">/100</span></span>
             </div>
-            <span class="radar-value">{{ summary.radar.interaction }}<span class="radar-unit">/100</span></span>
           </div>
         </div>
-      </div>
 
-      <!-- Highlights -->
-      <div v-if="summary.highlights?.length" class="section">
-        <h2>会话亮点</h2>
-        <div v-for="(hl, idx) in summary.highlights" :key="idx" class="highlight-card">
-          <h3>{{ hl.title }}</h3>
-          <p class="hl-desc">{{ hl.description }}</p>
-          <p v-if="hl.example_sentence" class="hl-example">例：{{ hl.example_sentence }}</p>
-        </div>
-      </div>
-
-      <!-- Top pronunciation errors -->
-      <div v-if="summary.top_pronunciation_errors?.length" class="section">
-        <h2>发音薄弱句</h2>
-        <div
-          v-for="(pe, idx) in summary.top_pronunciation_errors"
-          :key="idx"
-          class="error-card pron-error"
-        >
-          <div class="error-header">
-            <span class="error-type-badge" :class="scoreBadgeClass(pe.score)">
-              {{ pe.score }}分
-            </span>
+        <!-- Highlights -->
+        <div v-if="summary.highlights?.length" class="section">
+          <h2>会话亮点</h2>
+          <div v-for="(hl, idx) in summary.highlights" :key="idx" class="highlight-card">
+            <h3>{{ hl.title }}</h3>
+            <p class="hl-desc">{{ hl.description }}</p>
+            <p v-if="hl.example_sentence" class="hl-example">例：{{ hl.example_sentence }}</p>
           </div>
-          <p class="error-sentence">"{{ pe.sentence }}"</p>
-          <router-link
-            :to="`/sessions/${summary.session_id}/pronunciation/${pe.utterance_id}`"
-            class="detail-link"
+        </div>
+
+        <!-- Top pronunciation errors -->
+        <div v-if="summary.top_pronunciation_errors?.length" class="section">
+          <h2>发音薄弱句</h2>
+          <div
+            v-for="(pe, idx) in summary.top_pronunciation_errors"
+            :key="idx"
+            class="error-card pron-error"
           >
-            查看发音详情 &rarr;
-          </router-link>
-        </div>
-      </div>
-
-      <!-- Top grammar errors -->
-      <div v-if="summary.top_grammar_errors?.length" class="section">
-        <h2>语法错误</h2>
-        <div
-          v-for="(ge, idx) in summary.top_grammar_errors"
-          :key="idx"
-          class="error-card grammar-error"
-        >
-          <div class="error-header">
-            <span class="error-type-badge grammar-badge">{{ ge.error_type }}</span>
-            <span class="error-severity" :class="'sev-' + (ge.severity || 'medium')">
-              {{ SEVERITY_MAP[ge.severity] || ge.severity }}
-            </span>
+            <div class="error-header">
+              <span class="error-type-badge" :class="scoreBadgeClass(pe.score)">
+                {{ pe.score }}分
+              </span>
+            </div>
+            <p class="error-sentence">"{{ pe.sentence }}"</p>
+            <router-link
+              :to="{
+                path: `/sessions/${summary.session_id}/pronunciation/${pe.utterance_id}`,
+                query: { from: 'summary' },
+              }"
+              class="detail-link"
+            >
+              查看发音详情 &rarr;
+            </router-link>
           </div>
-          <p class="error-original">原文：{{ ge.original }}</p>
-          <p class="error-correction">修正：<strong>{{ ge.correction }}</strong></p>
-          <p v-if="ge.explanation" class="error-explanation">{{ ge.explanation }}</p>
         </div>
-      </div>
 
-      <!-- Practice suggestions -->
-      <div v-if="summary.practice_suggestions?.length" class="section">
-        <h2>练习建议</h2>
-        <div v-for="(sug, idx) in summary.practice_suggestions" :key="idx" class="suggestion-card">
-          <h3>{{ sug.title }}</h3>
-          <p class="sg-desc">{{ sug.description }}</p>
-          <a v-if="sug.resource_url" :href="sug.resource_url" target="_blank" class="resource-link">
-            查看资源 &rarr;
-          </a>
+        <!-- Top grammar errors -->
+        <div v-if="summary.top_grammar_errors?.length" class="section">
+          <h2>语法错误</h2>
+          <div
+            v-for="(ge, idx) in summary.top_grammar_errors"
+            :key="idx"
+            class="error-card grammar-error"
+          >
+            <div class="error-header">
+              <span class="error-type-badge grammar-badge">{{ ge.error_type }}</span>
+              <span class="error-severity" :class="'sev-' + (ge.severity || 'medium')">
+                {{ SEVERITY_MAP[ge.severity] || ge.severity }}
+              </span>
+            </div>
+            <p class="error-original">原文：{{ ge.original }}</p>
+            <p class="error-correction">修正：<strong>{{ ge.correction }}</strong></p>
+            <p v-if="ge.explanation" class="error-explanation">{{ ge.explanation }}</p>
+          </div>
         </div>
-      </div>
-
-      <!-- Share image -->
-      <div v-if="summary.share_image_url" class="section">
-        <h2>分享海报</h2>
-        <img :src="summary.share_image_url" alt="分享海报" class="share-image" />
       </div>
 
       <div class="actions">
-        <router-link to="/" class="btn btn-primary">继续练习</router-link>
+        <router-link to="/" class="btn btn-secondary">回首页</router-link>
         <router-link to="/progress" class="btn btn-secondary">查看进度</router-link>
       </div>
     </div>
@@ -139,6 +139,7 @@ import { ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import { summaryApi, type SessionSummary } from '@/api/summary';
+import CoachCard from '@/components/CoachCard.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -147,6 +148,7 @@ const auth = useAuthStore();
 const loading = ref(false);
 const errorMsg = ref('');
 const summary = ref<SessionSummary | null>(null);
+const showDetails = ref(false);
 
 const SEVERITY_MAP: Record<string, string> = {
   low: '轻微',
@@ -158,6 +160,10 @@ function scoreBadgeClass(score: number): string {
   if (score >= 80) return 'score-green';
   if (score >= 60) return 'score-yellow';
   return 'score-red';
+}
+
+function goToScene(sceneId: number) {
+  router.push(`/scenes/${sceneId}`);
 }
 
 async function loadSummary() {
@@ -209,6 +215,35 @@ onMounted(() => {
 .error { color: var(--accent-danger); }
 
 .content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.toggle-details {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg-card);
+  border: none;
+  border-radius: 8px;
+  color: var(--accent-primary);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.toggle-details:hover {
+  opacity: 0.85;
+}
+
+.toggle-icon {
+  font-size: 0.7rem;
+}
+
+.details-panel {
   display: flex;
   flex-direction: column;
   gap: 24px;
@@ -270,23 +305,19 @@ onMounted(() => {
   margin-left: 1px;
 }
 
-/* Highlights & suggestions */
-.highlight-card,
-.suggestion-card {
+/* Highlights */
+.highlight-card {
   padding: 14px 0;
   border-bottom: 1px solid var(--bg-card);
 }
-.highlight-card:last-child,
-.suggestion-card:last-child {
+.highlight-card:last-child {
   border-bottom: none;
 }
-.highlight-card h3,
-.suggestion-card h3 {
+.highlight-card h3 {
   font-size: 0.95rem;
   margin-bottom: 4px;
 }
-.hl-desc,
-.sg-desc {
+.hl-desc {
   color: var(--text-secondary);
   font-size: 0.9rem;
   line-height: 1.55;
@@ -364,18 +395,6 @@ onMounted(() => {
   font-weight: 600;
 }
 .detail-link:hover { text-decoration: underline; }
-.resource-link {
-  display: inline-block;
-  margin-top: 8px;
-  font-size: 0.85rem;
-  color: var(--accent-primary);
-}
-
-/* Share image */
-.share-image {
-  max-width: 100%;
-  border-radius: 8px;
-}
 
 /* Actions */
 .actions {
@@ -389,10 +408,6 @@ onMounted(() => {
   border-radius: 8px;
   font-size: 1rem;
   font-weight: 600;
-}
-.btn-primary {
-  background: var(--accent-primary);
-  color: #0f172a;
 }
 .btn-secondary {
   background: var(--bg-card);

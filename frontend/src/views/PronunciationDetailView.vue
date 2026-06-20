@@ -1,7 +1,7 @@
 <template>
   <div class="pron-detail">
     <header class="page-header">
-      <router-link :to="`/summary/${sessionId}`" class="back-link">&larr; 返回总结</router-link>
+      <router-link :to="backTo" class="back-link">&larr; 返回</router-link>
       <h1>发音详情</h1>
     </header>
 
@@ -133,7 +133,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import { evaluationApi, type PronunciationDetail } from '@/api/evaluation';
@@ -144,6 +144,13 @@ const auth = useAuthStore();
 
 const sessionId = route.params.sessionId as string;
 const utteranceId = route.params.utteranceId as string;
+
+const backTo = computed(() => {
+  if (route.query.from === 'summary') {
+    return `/summary/${sessionId}`;
+  }
+  return `/chat/${sessionId}`;
+});
 
 const loading = ref(false);
 const errorMsg = ref('');

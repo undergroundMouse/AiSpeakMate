@@ -1,3 +1,4 @@
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from ..models.base import Base
@@ -16,3 +17,9 @@ async def init_db():
     """Create all tables using SQLAlchemy metadata (development convenience)."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(
+            text(
+                "ALTER TABLE pronunciation_evaluations "
+                "ADD COLUMN IF NOT EXISTS source VARCHAR(20)"
+            )
+        )

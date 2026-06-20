@@ -6,6 +6,7 @@
       <div class="navbar-right">
         <!-- Settings button -->
         <button class="btn-sm btn-outline-sm" @click="showSettings = true" title="设置">⚙️</button>
+        <button class="btn-sm btn-outline-sm" @click="openApiConfig" title="API 配置">🔑</button>
 
         <!-- Authenticated: user badge with dropdown -->
         <template v-if="auth.isAuthenticated">
@@ -84,7 +85,8 @@
         </div>
 
         <!-- TTS Voice -->
-        <h4 style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:8px;margin-top:16px">AI 语音</h4>
+        <h4 style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:8px;margin-top:16px">AI 语音（浏览器朗读）</h4>
+        <p style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:8px">使用本机浏览器语音引擎朗读 AI 回复，下方选项用于选择英式/美式与男/女声。</p>
         <div v-for="v in voices" :key="v.key" class="voice-option" :class="{ active: ttsVoice === v.key }" @click="ttsVoice = v.key; saveVoice()">
           {{ v.label }}
         </div>
@@ -98,14 +100,18 @@
         </div>
       </div>
     </div>
+
+    <ApiConfigModal v-if="showApiConfig" @close="showApiConfig = false" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch, onMounted, onUnmounted } from 'vue';
+import { ref, reactive, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
+import ApiConfigModal from '@/components/ApiConfigModal.vue';
+import { syncApiConfigFromCache } from '@/api/settings';
 
 const auth = useAuthStore();
 const chatStore = useChatStore();
@@ -121,7 +127,11 @@ const regForm = reactive({ username: '', email: '', password: '' });
 
 async function doLogin() {
   authError.value = ''; authLoading.value = true;
-  try { await auth.login(loginForm.email, loginForm.password); showAuth.value = false; }
+  try {
+    await auth.login(loginForm.email, loginForm.password);
+    showAuth.value = false;
+    await syncApiConfigFromCache();
+  }
   catch (e: any) { authError.value = e?.response?.data?.detail || '登录失败'; }
   finally { authLoading.value = false; }
 }
@@ -129,14 +139,27 @@ async function doRegister() {
   authError.value = '';
   if (regForm.password.length < 6) { authError.value = '密码至少6位'; return; }
   authLoading.value = true;
-  try { await auth.register(regForm.username, regForm.email, regForm.password); showAuth.value = false; }
+  try {
+    await auth.register(regForm.username, regForm.email, regForm.password);
+    showAuth.value = false;
+    await syncApiConfigFromCache();
+  }
   catch (e: any) { authError.value = e?.response?.data?.detail || '注册失败'; }
   finally { authLoading.value = false; }
 }
 
 // Settings
 const showSettings = ref(false);
+const showApiConfig = ref(false);
 const showUserMenu = ref(false);
+
+function openApiConfig() {
+  if (!auth.isAuthenticated) {
+    showAuth.value = true;
+    return;
+  }
+  showApiConfig.value = true;
+}
 
 // Theme
 const themes = [
@@ -205,6 +228,11 @@ function onDocClick(e: MouseEvent) {
     showUserMenu.value = false;
   }
 }
-onMounted(() => document.addEventListener('click', onDocClick));
+onMounted(() => {
+  document.addEventListener('click', onDocClick);
+  if (auth.isAuthenticated) {
+    syncApiConfigFromCache().catch(() => {});
+  }
+});
 onUnmounted(() => document.removeEventListener('click', onDocClick));
 </script>

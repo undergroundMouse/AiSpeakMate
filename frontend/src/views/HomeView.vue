@@ -14,8 +14,56 @@
 
     <!-- Scene sections -->
     <div v-if="!loading && !errorMsg">
+      <!-- Quick chat entry -->
+      <div v-if="auth.isAuthenticated" class="quick-chat-section">
+        <h2 class="quick-chat-title">今天想聊什么？</h2>
+        <div class="quick-chat-row">
+          <input
+            v-model="quickTopic"
+            class="quick-chat-input"
+            type="text"
+            placeholder="如：在东京找咖啡店"
+            @keydown.enter.exact.prevent="quickStartChat"
+          />
+          <button
+            class="btn-quick-start"
+            :disabled="quickLoading || !quickTopic.trim()"
+            @click="quickStartChat"
+          >
+            {{ quickLoading ? '生成中...' : '开聊' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Recent topics -->
+      <div v-if="auth.isAuthenticated && recentTopics.length" class="recent-section">
+        <h3 class="recent-title">最近聊过</h3>
+        <div class="recent-chips">
+          <button
+            v-for="(item, idx) in recentTopics"
+            :key="idx"
+            class="recent-chip"
+            @click="restartRecentTopic(item)"
+          >
+            {{ item.name }}
+          </button>
+        </div>
+      </div>
+
       <!-- Search -->
       <input v-model="searchQuery" class="search-bar" type="text" placeholder="🔍 搜索场景..." @input="onSearch" />
+
+      <!-- Recommended practice (returning users) -->
+      <div v-if="auth.isAuthenticated && hasCompletedSessions && recommendedOption" class="recommend-card">
+        <div class="recommend-content">
+          <span class="recommend-badge">推荐练习</span>
+          <h3 class="recommend-title">{{ recommendedOption.label }}</h3>
+          <p class="recommend-reason">{{ recommendedOption.reason }}</p>
+        </div>
+        <button class="btn-recommend-start" @click="goToRecommendedScene(recommendedOption.scene_id)">
+          开始练习
+        </button>
+      </div>
 
       <!-- Random challenge + Custom scene -->
       <div style="display:flex;gap:10px;justify-content:center;margin-bottom:20px;flex-wrap:wrap">
@@ -27,7 +75,8 @@
         </button>
       </div>
 
-      <!-- Categories -->
+      <!-- Inspiration scenes -->
+      <p v-if="filteredCategories.length" class="inspiration-label">或选一个灵感场景</p>
       <div v-for="cat in filteredCategories" :key="cat.category_id" style="margin-bottom:8px">
         <h2 class="section-title">{{ cat.category_name }}</h2>
         <div class="scene-grid">
@@ -101,6 +150,10 @@
     <div v-if="customSceneData" class="modal-overlay" @click.self="customSceneData=null">
       <div class="modal-box" style="max-width:520px;max-height:70vh;overflow-y:auto">
         <h3>✨ {{ customSceneData.topic }}</h3>
+        <div v-if="customSceneData.description" style="margin:12px 0;padding:10px;background:rgba(56,189,248,0.08);border-radius:8px;border-left:3px solid var(--accent-primary)">
+          <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:4px">场景简介：</p>
+          <p style="font-size:0.92rem;color:var(--text-primary)">{{ customSceneData.description }}</p>
+        </div>
         <div style="margin:12px 0;padding:10px;background:var(--bg-primary);border-radius:8px">
           <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:4px">AI 角色：</p>
           <p style="font-size:0.9rem">{{ customSceneData.role_prompt }}</p>
@@ -136,6 +189,7 @@ import { useChatStore } from '@/stores/chat';
 import { useSceneStore } from '@/stores/scene';
 import { sceneApi, type CategoryWithScenes } from '@/api/scene';
 import { sessionApi } from '@/api/session';
+import { summaryApi, type NextPracticeOption } from '@/api/summary';
 
 const DIFF_MAP: Record<string, string> = {
   beginner: '初级', intermediate: '中级', advanced: '高级',
@@ -150,6 +204,8 @@ const loading = ref(false);
 const errorMsg = ref('');
 const searchQuery = ref('');
 const randomLoading = ref(false);
+const hasCompletedSessions = ref(false);
+const recommendedOption = ref<NextPracticeOption | null>(null);
 
 // Custom scene
 const showCustomScene = ref(false);
@@ -160,6 +216,69 @@ const customDifficulty = ref('intermediate');
 const customLoading = ref(false);
 const customError = ref('');
 const STORAGE_KEY = 'aispeakmate_custom_scenes';
+const RECENT_KEY = 'aispeakmate_recent_topics';
+
+const quickTopic = ref('');
+const quickLoading = ref(false);
+
+interface RecentTopic {
+  name: string;
+  data: Record<string, unknown>;
+}
+
+function loadRecentTopics(): RecentTopic[] {
+  try { return JSON.parse(sessionStorage.getItem(RECENT_KEY) || '[]'); }
+  catch { return []; }
+}
+
+function saveRecentTopic(name: string, data: Record<string, unknown>) {
+  const list = loadRecentTopics().filter((r) => r.name !== name);
+  list.unshift({ name, data });
+  sessionStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, 3)));
+}
+
+const recentTopics = ref<RecentTopic[]>(loadRecentTopics());
+
+async function quickStartChat() {
+  if (!auth.isAuthenticated || !quickTopic.value.trim()) return;
+  quickLoading.value = true;
+  customError.value = '';
+  try {
+    const res = await sceneApi.createCustom({
+      topic: quickTopic.value.trim(),
+      difficulty: 'intermediate',
+    });
+    saveRecentTopic(res.topic, res as unknown as Record<string, unknown>);
+    recentTopics.value = loadRecentTopics();
+    const session = await sessionApi.create({
+      scene_id: 1,
+      custom_scene_id: res.custom_scene_id || undefined,
+    });
+    chatStore.sceneId = session.scene_id;
+    sessionStorage.setItem('activeCustomScene', JSON.stringify(res));
+    quickTopic.value = '';
+    router.push(`/chat/${session.session_id}`);
+  } catch (e: any) {
+    customError.value = e?.response?.data?.detail || '创建失败';
+  } finally {
+    quickLoading.value = false;
+  }
+}
+
+async function restartRecentTopic(item: RecentTopic) {
+  if (!auth.isAuthenticated) return;
+  quickLoading.value = true;
+  try {
+    const session = await sessionApi.create({ scene_id: 1 });
+    chatStore.sceneId = session.scene_id;
+    sessionStorage.setItem('activeCustomScene', JSON.stringify(item.data));
+    router.push(`/chat/${session.session_id}`);
+  } catch {
+    customError.value = '创建会话失败';
+  } finally {
+    quickLoading.value = false;
+  }
+}
 
 function loadCustomScenes(): any[] {
   try { return JSON.parse(sessionStorage.getItem(STORAGE_KEY) || '[]'); }
@@ -187,7 +306,7 @@ async function createCustomScene() {
     const newScene = {
       scene_id: `custom_${Date.now()}`,
       name: res.topic,
-      description: res.role_prompt,
+      description: res.description || res.role_prompt,
       difficulty_levels: [customDifficulty.value],
       tags: ['custom'],
       _custom: true,
@@ -195,6 +314,8 @@ async function createCustomScene() {
     };
     customScenes.value.push(newScene);
     saveCustomScenes(customScenes.value);
+    saveRecentTopic(res.topic, res as unknown as Record<string, unknown>);
+    recentTopics.value = loadRecentTopics();
     showCustomScene.value = false;
   } catch (e: any) {
     customError.value = e?.response?.data?.detail || '场景生成失败';
@@ -216,7 +337,8 @@ function viewCustomScene(scene: any) {
   // Build complete data from scene object
   const data = {
     topic: scene.name,
-    role_prompt: scene.description || scene._data?.role_prompt || '',
+    description: scene._data?.description || scene.description || '',
+    role_prompt: scene._data?.role_prompt || scene.description || '',
     opening_line: scene._data?.opening_line || 'Hello! How can I help you today?',
     vocab_list: scene._data?.vocab_list || [],
     sentence_patterns: scene._data?.sentence_patterns || [],
@@ -237,7 +359,7 @@ async function startCustomScene() {
     const session = await sessionApi.create({ scene_id: 1 });
     chatStore.sceneId = session.scene_id;
     // Store custom scene data for ChatView
-    sessionStorage.setItem('customScene', JSON.stringify(customSceneData.value));
+    sessionStorage.setItem('activeCustomScene', JSON.stringify(customSceneData.value));
     router.push(`/chat/${session.session_id}`);
   } catch (e: any) {
     customError.value = '创建会话失败';
@@ -291,6 +413,24 @@ function goToScene(id: number) {
   router.push(`/scenes/${id}`);
 }
 
+function goToRecommendedScene(sceneId: number) {
+  goToScene(sceneId);
+}
+
+async function loadRecommendations() {
+  if (!auth.isAuthenticated || !auth.user?.user_id) return;
+  try {
+    const progress = await summaryApi.getProgress(auth.user.user_id);
+    hasCompletedSessions.value = progress.total_sessions > 0;
+    if (!hasCompletedSessions.value) return;
+    const next = await summaryApi.getNextPractice(auth.user.user_id);
+    recommendedOption.value = next.options.find(o => o.kind === 'explore') ?? next.options[0] ?? null;
+  } catch {
+    hasCompletedSessions.value = false;
+    recommendedOption.value = null;
+  }
+}
+
 function showAuth() { router.push('/'); /* Auth modal is in App.vue */ }
 
 async function goToRandomScene() {
@@ -305,18 +445,20 @@ async function goToRandomScene() {
 
 onMounted(() => {
   loadScenes();
+  loadRecommendations();
   // Load custom scenes from backend
   if (auth.isAuthenticated) {
     sceneApi.listCustom().then(scenes => {
       customScenes.value = scenes.map((s: any) => ({
         scene_id: `custom_${s.custom_scene_id}`,
         name: s.topic,
-        description: s.role_prompt || '',
+        description: s.description || s.role_prompt || '',
         difficulty_levels: [s.difficulty || 'intermediate'],
         tags: ['custom'],
         _custom: true,
         _data: {
           topic: s.topic,
+          description: s.description || '',
           role_prompt: s.role_prompt || '',
           opening_line: s.opening_line || '',
           vocab_list: s.vocab_list || [],
@@ -333,3 +475,120 @@ onMounted(() => {
   }
 });
 </script>
+
+<style scoped>
+.recommend-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(74, 222, 128, 0.1));
+  border-radius: var(--radius);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+}
+
+.recommend-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--accent-primary);
+  margin-bottom: 4px;
+}
+
+.recommend-title {
+  font-size: 1rem;
+  margin: 0 0 4px;
+}
+
+.recommend-reason {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.btn-recommend-start {
+  flex-shrink: 0;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent-primary);
+  color: #0f172a;
+  font-weight: 700;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.btn-recommend-start:hover {
+  opacity: 0.9;
+}
+
+.quick-chat-section {
+  margin-bottom: 20px;
+  padding: 16px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius);
+}
+.quick-chat-title {
+  font-size: 1rem;
+  margin: 0 0 10px;
+}
+.quick-chat-row {
+  display: flex;
+  gap: 8px;
+}
+.quick-chat-input {
+  flex: 1;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--bg-card);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+}
+.btn-quick-start {
+  padding: 10px 18px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent-primary);
+  color: #0f172a;
+  font-weight: 700;
+  cursor: pointer;
+}
+.btn-quick-start:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.recent-section {
+  margin-bottom: 16px;
+}
+.recent-title {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin: 0 0 8px;
+}
+.recent-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.recent-chip {
+  padding: 6px 14px;
+  border-radius: 20px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  border: none;
+  cursor: pointer;
+}
+.recent-chip:hover {
+  background: rgba(56, 189, 248, 0.15);
+}
+.inspiration-label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin: 8px 0 12px;
+  text-align: center;
+}
+</style>

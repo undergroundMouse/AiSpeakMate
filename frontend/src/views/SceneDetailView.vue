@@ -83,7 +83,7 @@
         :disabled="starting"
         @click="startSession"
       >
-        {{ starting ? '创建会话中...' : '开始练习' }}
+        {{ starting ? '创建会话中...' : '开始聊天' }}
       </button>
 
       <p v-if="startError" class="start-error">{{ startError }}</p>
@@ -459,6 +459,46 @@ onMounted(() => {
   background: var(--bg-card);
   padding: 2px 10px;
   border-radius: 10px;
+}
+
+.mode-section {
+  margin-bottom: 20px;
+}
+.mode-label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+.mode-picker {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.mode-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 2px solid var(--border-color, #334155);
+  background: var(--bg-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.2s, background 0.2s;
+}
+.mode-btn.active {
+  border-color: var(--accent-primary);
+  background: rgba(56, 189, 248, 0.08);
+}
+.mode-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+.mode-desc {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
 }
 
 .btn-start {
